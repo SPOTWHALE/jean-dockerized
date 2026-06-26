@@ -1,0 +1,77 @@
+name: Image status badge
+
+# Keeps a shields "endpoint" badge in sync with whether master has IMAGE-file
+# changes (Dockerfile/entrypoint.sh/jean-release.pub/proxy/web) that aren't in
+# the latest published release yet - i.e. "is there something to manually
+# release?". Other changes (docs, compose, workflows) are ignored on purpose.
+#
+# The badge JSON lives on the orphan `badges` branch as image-status.json and is
+# updated here via the Contents API (no extra checkout/worktree of that branch).
+# README points shields at the raw file. This never touches master history and
+# never triggers the Release workflow.
+on:
+  push:
+    branches: [master]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # PUT image-status.json onto the badges branch
+
+concurrency:
+  group: image-status-badge
+  cancel-in-progress: true
+
+jobs:
+  badge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Always evaluate master against the latest release, whatever the trigger.
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute image delta and publish badge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Files baked into the image. Keep in sync with release.yml's context.
+          FILES="Dockerfile entrypoint.sh jean-release.pub proxy web"
+          LAST=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 \
+            --json tagName --jq '.[0].tagName // empty')
+          if [ -z "$LAST" ]; then
+            msg="no release yet"; color="lightgrey"
+          else
+            # Content diff of image files between the release tag and master HEAD.
+            n=$(git diff --name-only "$LAST" HEAD -- $FILES | wc -l | tr -d ' ')
+            if [ "$n" -eq 0 ]; then
+              msg="up to date"; color="brightgreen"
+            else
+              msg="$n to release"; color="orange"
+            fi
+          fi
+          printf '{"schemaVersion":1,"label":"image","message":"%s","color":"%s"}\n' \
+            "$msg" "$color" > status.json
+          echo "computed: $msg (vs ${LAST:-none})"
+
+          # Skip the write if the published badge already says the same thing,
+          # so the badges branch doesn't gain a no-op commit on every push.
+          CUR=$(gh api "repos/$GITHUB_REPOSITORY/contents/image-status.json?ref=badges" \
+            --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+          if [ "$CUR" = "$(cat status.json)" ]; then
+            echo "badge unchanged - nothing to publish"; exit 0
+          fi
+
+          SHA=$(gh api "repos/$GITHUB_REPOSITORY/contents/image-status.json?ref=badges" \
+            --jq .sha 2>/dev/null || true)
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/image-status.json" \
+            -f message="image-status: $msg" \
+            -f content="$(base64 -w0 status.json)" \
+            -f branch=badges \
+            ${SHA:+-f sha="$SHA"} >/dev/null
+          echo "published: $msg"

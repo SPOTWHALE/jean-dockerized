@@ -3,6 +3,7 @@
 [![Docker Pulls](https://img.shields.io/docker/pulls/spotwhale/jean-dockerized?logo=docker)](https://hub.docker.com/r/spotwhale/jean-dockerized)
 [![Docker Image Size](https://img.shields.io/docker/image-size/spotwhale/jean-dockerized/latest?logo=docker)](https://hub.docker.com/r/spotwhale/jean-dockerized)
 [![GitHub release](https://img.shields.io/github/v/release/SPOTWHALE/jean-dockerized?logo=github)](https://github.com/SPOTWHALE/jean-dockerized/releases)
+[![Image status](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FSPOTWHALE%2Fjean-dockerized%2Fbadges%2Fimage-status.json&logo=docker)](https://github.com/SPOTWHALE/jean-dockerized/actions/workflows/release.yml)
 
 Run [Jean](https://github.com/coollabsio/jean) in your browser, on your server. Code with Claude and Codex from any device — laptop, phone, tablet — with no local setup.
 
