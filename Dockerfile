@@ -96,14 +96,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends minisign \
 # since jean's web client only accepts the token via a ?token= URL (no manual
 # field). Static assets only; jean's binary/frontend are otherwise untouched.
 COPY web/ /tmp/web/
+# This image's own release tag (e.g. v0.1.58b), passed by release.yml. When set,
+# inject-pwa.mjs bakes it in and ships version-badge.js, which re-points jean's
+# version badge to our repo and shows an update pill. Blank on local builds ->
+# the badge is left as jean's (the script no-ops without a version).
+ARG IMAGE_VERSION=
 # Install rsvg-convert (build-time only), render icons, inject PWA tags, then
 # purge the package in the same layer so it doesn't land in the final image.
 RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-bin \
- && cp /tmp/web/manifest.webmanifest /tmp/web/sw.js /tmp/web/token.html /usr/local/bin/dist/ \
+ && cp /tmp/web/manifest.webmanifest /tmp/web/sw.js /tmp/web/token.html /tmp/web/version-badge.js /usr/local/bin/dist/ \
  && rsvg-convert -w 192 -h 192 /tmp/web/icon.svg -o /usr/local/bin/dist/icon-192.png \
  && rsvg-convert -w 512 -h 512 /tmp/web/icon.svg -o /usr/local/bin/dist/icon-512.png \
  && rsvg-convert -w 180 -h 180 /tmp/web/icon.svg -o /usr/local/bin/dist/apple-touch-icon.png \
- && node /tmp/web/inject-pwa.mjs /usr/local/bin/dist/index.html \
+ && IMAGE_VERSION="$IMAGE_VERSION" node /tmp/web/inject-pwa.mjs /usr/local/bin/dist/index.html \
  && apt-get purge -y librsvg2-bin \
  && rm -rf /var/lib/apt/lists/* /tmp/web
 

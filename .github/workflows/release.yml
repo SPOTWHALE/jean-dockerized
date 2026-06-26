@@ -135,6 +135,7 @@ jobs:
           sbom: false
           build-args: |
             JEAN_REF=${{ steps.jean.outputs.ref }}
+            IMAGE_VERSION=${{ steps.ver.outputs.tag }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

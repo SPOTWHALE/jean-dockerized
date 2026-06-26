@@ -73,6 +73,17 @@ Two non-obvious runtime constraints, both load-bearing - do not "clean them up":
    the app shows its own error and the guard would otherwise bounce you back into it. Don't
    reintroduce an unconditional "token stored -> redirect to /" branch.
    Edit assets in `web/`, never jean's source.
+4. **Version badge is re-pointed, not forked.** jean's top-right badge shows
+   *jean's* version linking to `coollabsio/jean`, and its "Update available"
+   indicator only fires from the Tauri desktop updater (dead in headless web). So
+   `inject-pwa.mjs` bakes this image's release tag in as `window.__IMAGE_VERSION__`
+   (from the `IMAGE_VERSION` build-arg, set by `release.yml` to `steps.ver.tag`)
+   and ships `web/version-badge.js`. That script can't touch jean's React tree, so
+   it uses a `MutationObserver` to rewrite the badge to our version, hijacks its
+   click (capture phase, before React's root listener) to open
+   `SPOTWHALE/jean-dockerized` releases, and polls our `releases/latest` to show
+   our own update pill when the tag differs. `IMAGE_VERSION` blank (local build)
+   -> the script no-ops and jean's badge is left as-is.
 
 **Preview proxy.** A static Caddy binary (`COPY --from=caddy:2`) runs in the background from
 `entrypoint.sh`, configured by `proxy/Caddyfile`. It listens on `PREVIEW_PORT` (8088) and maps
