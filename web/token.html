@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0c">
+<title>Jean - Access token</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100dvh; display: grid; place-items: center;
+    background: #0b0b0c; color: #e7e7ea;
+    font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: env(safe-area-inset-top) 24px env(safe-area-inset-bottom);
+  }
+  form { width: 100%; max-width: 360px; display: grid; gap: 14px; }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+  p { margin: 0; color: #9b9ba3; font-size: 14px; }
+  input {
+    width: 100%; padding: 12px 14px; border-radius: 10px;
+    border: 1px solid #2a2a30; background: #141417; color: #e7e7ea; font-size: 16px;
+  }
+  input:focus { outline: none; border-color: #5b5bd6; }
+  button {
+    width: 100%; padding: 12px 14px; border: 0; border-radius: 10px;
+    background: #5b5bd6; color: #fff; font-size: 16px; font-weight: 600; cursor: pointer;
+  }
+  button:active { transform: translateY(1px); }
+</style>
+</head>
+<body>
+<form id="f">
+  <h1>Enter access token 💪</h1>
+  <p>Paste the token from Jean's Web Access settings. It's stored on this device only.</p>
+  <input id="t" type="password" inputmode="text" autocomplete="off"
+         autocapitalize="off" spellcheck="false" placeholder="access token" required>
+  <button type="submit">Save &amp; open</button>
+</form>
+<script>
+  // transport.ts reads the token from this exact localStorage key.
+  var KEY = 'jean-http-token';
+  var urlToken = new URLSearchParams(location.search).get('token');
+
+  // A token in the URL always wins (lets you re-key a device via a link).
+  if (urlToken) { localStorage.setItem(KEY, urlToken); location.replace('/'); }
+  // Already provisioned on this device? Skip straight to the app.
+  else if (localStorage.getItem(KEY)) { location.replace('/'); }
+
+  document.getElementById('f').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var v = document.getElementById('t').value.trim();
+    if (v) localStorage.setItem(KEY, v);
+    location.replace('/');
+  });
+</script>
+</body>
+</html>

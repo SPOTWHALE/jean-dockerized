@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Full-bleed background so the icon works as a maskable icon (Android). -->
+  <rect width="512" height="512" fill="#0b0b0c"/>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6d6df0"/>
+      <stop offset="1" stop-color="#4f3fd6"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded plate kept within the ~80% maskable safe zone. -->
+  <rect x="96" y="96" width="320" height="320" rx="72" fill="url(#g)"/>
+  <!-- Stylized "J". -->
+  <path d="M300 168 v118 a58 58 0 0 1 -58 58 a58 58 0 0 1 -58 -58 h44
+           a14 14 0 0 0 28 0 v-118 z" fill="#ffffff"/>
+</svg>

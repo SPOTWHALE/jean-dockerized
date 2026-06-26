@@ -1,0 +1,40 @@
+services:
+  jean:
+    # Pin to a specific version tag in production (e.g. spotwhale/jean-dockerized:v0.1.57a)
+    # so `docker compose pull` doesn't silently update to a broken release.
+    image: spotwhale/jean-dockerized:latest
+    restart: unless-stopped
+    # Required for Docker-in-Docker (so agents can run `docker` / `docker compose`).
+    privileged: true
+    ports:
+      # Bind to loopback only — Traefik/Coolify reaches the container via its
+      # internal network, not through these host ports. Binding 0.0.0.0 risks
+      # exposing jean directly if the reverse proxy is misconfigured.
+      - "127.0.0.1:3456:3456"
+      # Preview proxy: <port>.<your-wildcard-domain> -> container's dev servers.
+      # Point a wildcard Coolify domain (*.apps.you.dev) at this port.
+      - "127.0.0.1:8088:8088"
+    environment:
+      JEAN_HOST: 0.0.0.0
+      JEAN_PORT: 3456
+      PREVIEW_PORT: 8088
+      # Gate every preview subdomain behind a login. Set PREVIEW_PASSWORD to enable.
+      # PREVIEW_USER: dev
+      # PREVIEW_PASSWORD: change-me
+      # Leave unset and jean auto-generates + persists a token.
+      # JEAN_TOKEN: change-me-to-a-long-random-string
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2'   # prevent runaway agent builds from starving the host; increase if needed
+    volumes:
+      - workspace:/workspace
+      # Persist Docker-in-Docker images/layers across restarts.
+      # docker-data accumulates unboundedly — prune periodically:
+      #   docker compose exec jean docker system prune -f
+      - docker-data:/var/lib/docker
+
+volumes:
+  workspace:
+  docker-data:

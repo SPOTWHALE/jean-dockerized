@@ -1,0 +1,6 @@
+# Local env / secrets
+.env
+
+# Agent scratch + local Claude config
+.ai/
+.claude/

@@ -1,0 +1,44 @@
+# Preview reverse proxy.
+#
+# Maps  <port>.<anything>  ->  127.0.0.1:<port>  inside this container, so a dev
+# server the agent starts (e.g. `php artisan serve --host 0.0.0.0 --port 8000`)
+# is reachable at https://8000.<your-preview-domain>. This is the piece Traefik
+# can't do itself - it routes host->fixed-port and can't derive the port from
+# the subdomain. Traefik/Coolify terminates TLS and forwards the wildcard here;
+# we speak plain HTTP. Only the numeric leading label is used, so the proxy is
+# domain-agnostic (whatever wildcard you point at it works).
+
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:{$PREVIEW_PORT:8088} {
+	# Capture the leading numeric label, e.g. "8000" from "8000.apps.you.dev".
+	@withport header_regexp port Host ^([0-9]{2,5})\.
+
+	# Block SSRF: privileged ports (<1024), jean itself, and this proxy's own port.
+	# int() converts the regex capture (substituted per-request) to a number.
+	@blocked {
+		header_regexp blockedport Host ^([0-9]{2,5})\.
+		expression `int({re.blockedport.1}) < 1024 || int({re.blockedport.1}) == {$JEAN_PORT:3456} || int({re.blockedport.1}) == {$PREVIEW_PORT:8088}`
+	}
+
+	handle @blocked {
+		respond "Forbidden: reserved port" 403
+	}
+
+	handle @withport {
+		# Optional basic auth in front of every preview port. entrypoint.sh
+		# writes this file: empty when PREVIEW_PASSWORD is unset (no gate), or a
+		# `basic_auth { user <bcrypt> }` block when it is set.
+		import /etc/caddy/auth.import
+		# websockets (vite HMR etc.) are upgraded automatically by reverse_proxy.
+		reverse_proxy 127.0.0.1:{re.port.1}
+	}
+
+	handle {
+		respond "Preview proxy. Open https://<port>.<your-preview-domain> and make sure the dev server binds 0.0.0.0:<port>." 404
+	}
+}
