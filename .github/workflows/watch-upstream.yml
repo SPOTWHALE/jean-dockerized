@@ -48,7 +48,16 @@ jobs:
             exit 0
           fi
 
-          echo "Dispatching build for $TAG"
+          # Build the new jean on the repo state of our LAST published wrapper
+          # release - not master HEAD - so in-progress repo changes you haven't
+          # shipped yet don't ride along on an automatic jean bump. (release.yml
+          # checks out this repo_ref as the Docker build context; its own workflow
+          # file still comes from the default branch.) First-ever build: no prior
+          # release, so repo_ref is blank and release.yml builds the branch HEAD.
+          LAST_RELEASE=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 \
+            --json tagName --jq '.[0].tagName // empty')
+          echo "Dispatching build for jean $TAG on repo ${LAST_RELEASE:-HEAD}"
           gh workflow run release.yml \
             --repo "$GITHUB_REPOSITORY" \
-            --field jean_ref="$TAG"
+            --field jean_ref="$TAG" \
+            --field repo_ref="$LAST_RELEASE"

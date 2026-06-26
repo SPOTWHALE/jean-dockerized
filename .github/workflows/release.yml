@@ -2,27 +2,24 @@ name: Release
 
 # Every build gets its own immutable version, combining jean's version with a
 # wrapper revision letter: jean v0.1.57 + wrapper build -> v0.1.57a, v0.1.57b, ...
-# A new jean version resets the letter (v0.1.58a). Triggered by:
-#   - push to master      -> wrapper code changed; rebuild on current jean
-#   - workflow_dispatch    -> watch-upstream found a new jean version (or manual)
+# A new jean version resets the letter (v0.1.58a).
+#
+# Manual only - there is no push trigger. Builds happen when you explicitly want
+# them to, so unreleased repo changes on master never ship by accident:
+#   - workflow_dispatch (you)      -> apply your repo changes: blank repo_ref builds
+#                                     this branch's HEAD (master).
+#   - workflow_dispatch (watcher)  -> bump jean only: watch-upstream passes the
+#                                     commit of the last published wrapper release
+#                                     as repo_ref, so master WIP is ignored.
 on:
-  push:
-    branches: [master]
-    # Only rebuild when something baked into the image changes. Docs, compose,
-    # license, and other repo files don't affect the image, so skip them.
-    # NOTE: paths filters apply to push only; workflow_dispatch (the upstream
-    # watcher / new-jean-version builds) ignores them and always builds.
-    paths:
-      - Dockerfile
-      - entrypoint.sh
-      - jean-release.pub
-      - proxy/**
-      - web/**
-      - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
       jean_ref:
-        description: "jean release tag to build (e.g. v0.1.57); blank = latest"
+        description: "jean release tag to build (e.g. v0.1.57); blank = latest complete release"
+        required: false
+        default: ""
+      repo_ref:
+        description: "repo commit/branch/tag to build (blank = this branch HEAD)"
         required: false
         default: ""
 
@@ -35,8 +32,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # Build the requested repo state. Blank repo_ref -> the branch this dispatch
+      # ran on (master HEAD), i.e. your latest pushed changes. The watcher passes a
+      # specific commit so jean-only bumps build the last released repo state.
+      # NOTE: the workflow *file* itself always comes from the default branch for
+      # workflow_dispatch; repo_ref only controls the checked-out Docker context.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.repo_ref }}
+
+      # Resolve the actual commit we checked out, so the GitHub Release tags it
+      # (GITHUB_SHA points at the dispatch branch, not necessarily repo_ref).
+      - name: Resolve built commit
+        id: src
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # Base version = the jean release we bundle. From the dispatch input, else
       # the newest jean release that actually ships the amd64 AND arm64 .deb we
@@ -140,7 +150,7 @@ jobs:
           JEAN="${{ steps.jean.outputs.ref }}"
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
+            --target "${{ steps.src.outputs.sha }}" \
             --title "$TAG" \
             --notes "Bundles jean [$JEAN](https://github.com/coollabsio/jean/releases/tag/$JEAN)." \
             --latest
