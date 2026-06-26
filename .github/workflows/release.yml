@@ -155,3 +155,11 @@ jobs:
             --title "$TAG" \
             --notes "Bundles jean [$JEAN](https://github.com/coollabsio/jean/releases/tag/$JEAN)." \
             --latest
+
+      # The release's `published` event won't start image-status.yml on its own:
+      # GitHub blocks events made by GITHUB_TOKEN from triggering new workflow
+      # runs. workflow_dispatch is exempt, so kick the badge refresh explicitly.
+      - name: Refresh image-status badge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run image-status.yml --repo "$GITHUB_REPOSITORY" --ref master
