@@ -4,10 +4,24 @@ services:
     # so `docker compose pull` doesn't silently update to a broken release.
     image: spotwhale/jean-dockerized:latest
     restart: unless-stopped
+    # Run a real init (tini) as PID 1. jean would otherwise be PID 1 with no child
+    # reaper or signal forwarder: Docker-in-Docker constantly orphans processes
+    # that reparent to PID 1 (zombie buildup), and on stop/restart jean would not
+    # forward SIGTERM to dockerd, risking an unclean /var/lib/docker shutdown. tini
+    # reaps zombies and forwards signals, and lets the health watchdog's `kill 1`
+    # actually take effect (the kernel ignores signals to a bare PID 1).
+    init: true
+    # Cap container log growth. jean is chatty on stdout and the default json-file
+    # driver is unbounded, so on a long-lived host the logs alone can fill the disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # Required for Docker-in-Docker (so agents can run `docker` / `docker compose`).
     privileged: true
     ports:
-      # Bind to loopback only — Traefik/Coolify reaches the container via its
+      # Bind to loopback only. Traefik/Coolify reaches the container via its
       # internal network, not through these host ports. Binding 0.0.0.0 risks
       # exposing jean directly if the reverse proxy is misconfigured.
       - "127.0.0.1:3456:3456"
@@ -18,9 +32,13 @@ services:
       JEAN_HOST: 0.0.0.0
       JEAN_PORT: 3456
       PREVIEW_PORT: 8088
-      # Gate every preview subdomain behind a login. Set PREVIEW_PASSWORD to enable.
+      # Preview subdomains are DISABLED (403) until you set PREVIEW_PASSWORD. Set it
+      # to gate every preview port behind one basic-auth login (PREVIEW_USER: dev).
       # PREVIEW_USER: dev
       # PREVIEW_PASSWORD: change-me
+      # Public URL of this instance. When set, the startup banner prints a ready
+      # login link (and a scannable QR) so onboarding is one tap on a phone.
+      # JEAN_PUBLIC_URL: https://jean.example.com
       # Leave unset and jean auto-generates + persists a token.
       # JEAN_TOKEN: change-me-to-a-long-random-string
     deploy:
@@ -31,7 +49,7 @@ services:
     volumes:
       - workspace:/workspace
       # Persist Docker-in-Docker images/layers across restarts.
-      # docker-data accumulates unboundedly — prune periodically:
+      # docker-data accumulates unboundedly, so prune periodically:
       #   docker compose exec jean docker system prune -f
       - docker-data:/var/lib/docker
 

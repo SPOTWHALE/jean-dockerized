@@ -91,10 +91,12 @@ the leading numeric label of the Host (`<port>.<anything>`) to `127.0.0.1:<port>
 servers the agent starts in the container are reachable via a wildcard domain. Traefik/Coolify
 terminates TLS and forwards `*.apps.<domain>` → 8088; Caddy speaks plain HTTP (`auto_https off`).
 This split exists because Traefik routes host→fixed-port and can't derive the port from the
-subdomain. Dev servers must bind `0.0.0.0`. The Caddyfile `import`s `/etc/caddy/auth.import`
-for every preview port; `entrypoint.sh` writes that file at startup with a `basic_auth` block
-(bcrypt via `caddy hash-password`) when `PREVIEW_PASSWORD` is set, or leaves it empty otherwise.
-So setting `PREVIEW_USER`/`PREVIEW_PASSWORD` gates all preview ports behind one login.
+subdomain. Dev servers must bind `0.0.0.0`. Each preview port's `route` `import`s
+`/etc/caddy/auth.import` (wrapped in `route` so the gate runs before `reverse_proxy`);
+`entrypoint.sh` writes that file at startup. Previews **fail closed**: a `basic_auth` block
+(bcrypt via `caddy hash-password`) when `PREVIEW_PASSWORD` is set, otherwise a `respond 403`.
+So previews are disabled until `PREVIEW_PASSWORD` is set, then gated behind one login. Don't
+revert this to an empty/open default - it would expose every loopback port to the internet.
 
 **Docker-in-Docker.** The image installs the full Docker engine (`docker-ce` + compose/buildx
 plugins, plus a `docker-compose` shim for the v1 name). `entrypoint.sh` starts `dockerd` in the
@@ -105,8 +107,11 @@ container isn't privileged, dockerd fails to start and entrypoint logs it but je
 
 `entrypoint.sh` flow: set `safe.directory '*'` → start Xvfb → start dockerd (bg) → start preview proxy (caddy, bg) →
 resolve auth args (`JEAN_TOKEN` set → `--token …`; else jean auto-generates and persists a
-token in the workspace volume) → `exec jean --headless`. Auth is always on: the wrapper
-deliberately does **not** expose jean's `--no-token` flag.
+token in the workspace volume) → print the login banner (a ready link + `qrencode` QR when
+`JEAN_PUBLIC_URL` is set) → `exec jean --headless`. Auth is always on: the wrapper
+deliberately does **not** expose jean's `--no-token` flag. `docker-compose.yml` sets `init: true`
+so **tini is PID 1** (jean is its child): tini reaps the zombies DinD orphans and forwards
+SIGTERM, and it's what makes the health watchdog's `kill 1` actually stop jean for a restart.
 Repos are cloned through jean's own UI into `/workspace` (persists). **Git commit identity
 is managed entirely by jean's UI** (it reads/writes the global `.gitconfig`); the wrapper
 does not touch it.

@@ -17,8 +17,14 @@
   // Newer release tag once the update check finds one (else null).
   var latest = null
 
+  // Cache the located node so the common case is a cheap isConnected check
+  // instead of scanning every <button> on each DOM mutation.
+  var badgeEl = null
+
   // jean's badge: a <button> carrying this Tailwind class whose text is "vX.Y.Z".
   function findBadge() {
+    if (badgeEl && badgeEl.isConnected) return badgeEl
+    badgeEl = null
     var btns = document.getElementsByTagName('button')
     for (var i = 0; i < btns.length; i++) {
       var b = btns[i]
@@ -27,6 +33,7 @@
         b.className.indexOf('text-foreground/40') !== -1 &&
         /^v\d+\.\d+\.\d+/.test(b.textContent.trim())
       ) {
+        badgeEl = b
         return b
       }
     }
@@ -41,13 +48,16 @@
     var pill = document.createElement('button')
     pill.id = PILL_ID
     pill.type = 'button'
-    pill.title = 'New release ' + latest + ' available'
+    // Honest about what the click does: this is not an in-app self-update (the
+    // container can't update itself), it opens the release notes to redeploy.
+    pill.title =
+      'New release ' + latest + '. Opens release notes; update by redeploying the image.'
     // Mirrors jean's own UpdateIndicator styling/slot.
     pill.className =
       'mr-1.5 flex items-center gap-1 rounded-md bg-primary/15 px-1.5 py-0.5 ' +
       'text-[0.625rem] font-medium text-primary hover:bg-primary/25 ' +
       'transition-colors cursor-pointer'
-    pill.textContent = 'Update available'
+    pill.textContent = latest + ' available'
     pill.addEventListener('click', function (e) {
       e.preventDefault()
       e.stopImmediatePropagation()
@@ -103,10 +113,22 @@
       })
   }
 
-  new MutationObserver(apply).observe(document.body, {
+  // Coalesce mutation bursts (streaming chat tokens, terminal output) into at
+  // most one apply() per frame so the observer isn't a hot loop. characterData
+  // is intentionally not observed; badge/pill changes are childList-level.
+  var scheduled = false
+  function schedule() {
+    if (scheduled) return
+    scheduled = true
+    requestAnimationFrame(function () {
+      scheduled = false
+      apply()
+    })
+  }
+
+  new MutationObserver(schedule).observe(document.body, {
     childList: true,
-    subtree: true,
-    characterData: true
+    subtree: true
   })
 
   apply()

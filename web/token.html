@@ -33,12 +33,14 @@
 <body>
 <form id="f">
   <h1>Enter access token 💪</h1>
-  <p>Paste the token from Jean's Web Access settings. It's stored on this device only.</p>
+  <p>Paste the access token from your server logs (<code>docker compose logs</code>)
+     or the <code>JEAN_TOKEN</code> you set. It's stored on this device only.</p>
   <input id="t" type="password" inputmode="text" autocomplete="off"
          autocapitalize="off" spellcheck="false" placeholder="access token" required>
   <button type="submit">Save &amp; open</button>
   <p id="open" hidden>A token is already saved on this device.
      <a href="/" id="openlink">Open Jean →</a></p>
+  <p style="font-size:13px"><a href="/token.html?reset">Token not working? Clear it and re-enter</a></p>
 </form>
 <script>
   // transport.ts reads the token from this exact localStorage key.
@@ -53,7 +55,7 @@
     // a wrong token is stored: the app shows its own error and the index guard
     // would otherwise bounce you straight back into it. Visiting /token.html
     // (optionally with ?reset) always shows this form instead of auto-redirecting,
-    // so a token can always be replaced — even inside an installed PWA.
+    // so a token can always be replaced - even inside an installed PWA.
     if (params.has('reset')) localStorage.removeItem(KEY);
     // If a token is already saved, offer a one-tap link back to the app, but
     // still let the user type a new one to overwrite it.

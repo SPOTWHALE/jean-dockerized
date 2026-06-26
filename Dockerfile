@@ -23,11 +23,12 @@ ARG TARGETARCH
 
 # Runtime deps. The Tauri binary initializes a GTK event loop even in
 # --headless mode and panics "Failed to initialize GTK" without a display, so
-# it needs the GTK/webkit libs + xvfb. Plus git/ssh for repos and curl for the
-# health check. librsvg2-bin (rsvg-convert) is installed only during the PWA
-# step below and purged in the same layer so it doesn't land in the final image.
+# it needs the GTK/webkit libs + xvfb. Plus git/ssh for repos, curl for the
+# health check, and qrencode to render the startup login QR (entrypoint.sh).
+# librsvg2-bin (rsvg-convert) is installed only during the PWA step below and
+# purged in the same layer so it doesn't land in the final image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git openssh-client \
+    ca-certificates curl git openssh-client qrencode \
     libssl3 xvfb xauth \
     libwebkit2gtk-4.1-0 librsvg2-2 libayatana-appindicator3-1 libgtk-3-0 \
  && rm -rf /var/lib/apt/lists/*

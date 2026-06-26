@@ -58,7 +58,7 @@ Setup (Coolify):
 1. Wildcard TLS needs a **DNS-01** challenge - add your DNS provider token in Coolify/Traefik
 2. The agent must bind to `0.0.0.0`, e.g. `vite --host` or `php artisan serve --host 0.0.0.0 --port 8000`
 
-> Preview subdomains have no token. Set `PREVIEW_USER` + `PREVIEW_PASSWORD` to gate them behind basic auth.
+> Preview subdomains are **disabled (403) until you set `PREVIEW_PASSWORD`**, which gates every preview port behind one basic-auth login (`PREVIEW_USER` defaults to `dev`). This fails closed so a misconfigured deploy never exposes loopback ports to the internet.
 
 ## Security
 
@@ -98,7 +98,8 @@ Sysbox is a **host-installed runtime**, not part of the image: it can't be bundl
 | Env | Default | Description |
 |-----|---------|-------------|
 | `JEAN_TOKEN` | auto-generated | Fixed access token (persisted in the workspace volume if unset) |
+| `JEAN_PUBLIC_URL` | unset | Public URL of this instance; when set, the startup banner prints a ready login link + QR |
 | `JEAN_PORT` | `3456` | Jean web UI port |
 | `PREVIEW_PORT` | `8088` | Preview reverse-proxy port |
 | `PREVIEW_USER` | `dev` | Username for preview basic auth |
-| `PREVIEW_PASSWORD` | unset | Enables basic auth on all preview subdomains |
+| `PREVIEW_PASSWORD` | unset | Required to enable previews; gates all preview subdomains behind basic auth (unset = previews return 403) |

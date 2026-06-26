@@ -27,16 +27,20 @@
 
 	handle @blocked {
 		header Content-Type "text/html; charset=utf-8"
-		respond `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Forbidden</title><body style="margin:0;min-height:100dvh;display:grid;place-items:center;background:#0b0b0c;color:#e7e7ea;font:16px/1.5 system-ui,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:20px;margin:0 0 8px">Reserved port 🚫</h1><p style="margin:0;color:#9b9ba3">Ports below 1024 and Jean's own ports can't be previewed. Use a dev-server port in the 1024–65535 range.</p></div>` 403
+		respond `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Forbidden</title><body style="margin:0;min-height:100dvh;display:grid;place-items:center;background:#0b0b0c;color:#e7e7ea;font:16px/1.5 system-ui,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:20px;margin:0 0 8px">Reserved port 🚫</h1><p style="margin:0;color:#9b9ba3">Ports below 1024 and Jean's own ports can't be previewed. Use a dev-server port in the 1024-65535 range.</p></div>` 403
 	}
 
 	handle @withport {
-		# Optional basic auth in front of every preview port. entrypoint.sh
-		# writes this file: empty when PREVIEW_PASSWORD is unset (no gate), or a
-		# `basic_auth { user <bcrypt> }` block when it is set.
-		import /etc/caddy/auth.import
-		# websockets (vite HMR etc.) are upgraded automatically by reverse_proxy.
-		reverse_proxy 127.0.0.1:{re.port.1}
+		# `route` keeps directives in written order, so the imported gate runs
+		# before reverse_proxy. entrypoint.sh writes auth.import as either a
+		# `basic_auth { user <bcrypt> }` block (when PREVIEW_PASSWORD is set) or a
+		# `respond 403` (when it is unset) - so previews fail CLOSED by default and
+		# a misconfigured deploy can't expose every loopback port to the internet.
+		route {
+			import /etc/caddy/auth.import
+			# websockets (vite HMR etc.) are upgraded automatically by reverse_proxy.
+			reverse_proxy 127.0.0.1:{re.port.1}
+		}
 	}
 
 	handle {

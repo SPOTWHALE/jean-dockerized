@@ -61,22 +61,30 @@ fi
 # the agent starts are viewable through a wildcard domain. Runs in the background
 # (jean stays PID 1 via the exec below). Optional - skipped if caddy is absent.
 if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
-  # The Caddyfile imports /etc/caddy/auth.import for every preview port. Fill it
-  # with a basic_auth block when PREVIEW_PASSWORD is set, else leave it empty.
+  # The Caddyfile imports /etc/caddy/auth.import inside every preview port's route.
+  # Fail CLOSED: a basic_auth gate when PREVIEW_PASSWORD is set, otherwise a flat
+  # 403 so previews are never open to the internet by accident. Guard the
+  # hash-password call so a transient failure can't abort the whole entrypoint
+  # (set -e) before jean even starts.
   : > /etc/caddy/auth.import
   if [ -n "${PREVIEW_PASSWORD:-}" ]; then
-    HASH="$(caddy hash-password --plaintext "${PREVIEW_PASSWORD}")"
-    printf 'basic_auth {\n  %s %s\n}\n' "${PREVIEW_USER:-dev}" "${HASH}" > /etc/caddy/auth.import
-    echo "[entrypoint] preview proxy: basic auth ON (user ${PREVIEW_USER:-dev})"
+    if HASH="$(caddy hash-password --plaintext "${PREVIEW_PASSWORD}" 2>/dev/null)"; then
+      printf 'basic_auth {\n  %s %s\n}\n' "${PREVIEW_USER:-dev}" "${HASH}" > /etc/caddy/auth.import
+      echo "[entrypoint] preview proxy: basic auth ON (user ${PREVIEW_USER:-dev})"
+    else
+      printf 'respond "Preview disabled (password hashing failed)." 403\n' > /etc/caddy/auth.import
+      echo "[entrypoint] WARNING: caddy hash-password failed; previews disabled (403)" >&2
+    fi
   else
-    echo "[entrypoint] preview proxy: basic auth OFF (set PREVIEW_PASSWORD to enable)"
+    printf 'respond "Preview disabled. Set PREVIEW_PASSWORD to enable preview URLs." 403\n' > /etc/caddy/auth.import
+    echo "[entrypoint] preview proxy: DISABLED (set PREVIEW_PASSWORD to enable)"
   fi
   echo "[entrypoint] starting preview proxy on :${PREVIEW_PORT:-8088}"
   caddy run --config /etc/caddy/Caddyfile --adapter caddyfile >/tmp/caddy.log 2>&1 &
   CADDY_PID=$!
   sleep 2
   if ! kill -0 "$CADDY_PID" 2>/dev/null; then
-    echo "[entrypoint] WARNING: caddy exited immediately (bad Caddyfile?) — preview proxy unavailable" >&2
+    echo "[entrypoint] WARNING: caddy exited immediately (bad Caddyfile?), preview proxy unavailable" >&2
     cat /tmp/caddy.log >&2
   else
     echo "[entrypoint] preview proxy ready"
@@ -99,8 +107,9 @@ if [ -n "${JEAN_TOKEN:-}" ]; then
 fi
 
 # Health watchdog: docker's HEALTHCHECK reports status but restart: unless-stopped
-# only acts on container exit, not unhealthy. This watchdog kills PID 1 (jean)
-# after 3 consecutive failed checks so Docker's restart policy can recover it.
+# only acts on container exit, not unhealthy. This watchdog signals PID 1 (tini,
+# via `init: true`) after 3 consecutive failed checks; tini forwards SIGTERM to
+# jean so it exits and Docker's restart policy can recover it.
 ( failed=0
   while sleep 30; do
     if curl -sf "http://localhost:${JEAN_PORT}/" >/dev/null 2>&1; then
@@ -115,6 +124,40 @@ fi
       fi
     fi
   done ) &
+
+# Onboarding banner: the hardest first-run step is getting the token into the
+# browser (worse on a phone). Print a clear box, and when JEAN_PUBLIC_URL is set
+# build a ready login link (token prefilled if JEAN_TOKEN is set) plus a scannable
+# QR so phone onboarding is "point camera, you're in". Without JEAN_TOKEN the
+# token is jean's auto-generated one, which jean prints to stdout on startup.
+print_login_banner() {
+  local base url
+  echo "============================================================"
+  echo "  Jean is starting (headless web)."
+  if [ -n "${JEAN_PUBLIC_URL:-}" ]; then
+    base="${JEAN_PUBLIC_URL%/}"
+    if [ -n "${JEAN_TOKEN:-}" ]; then
+      url="${base}/token.html?token=${JEAN_TOKEN}"
+      echo "  Open this link to log in (token prefilled):"
+    else
+      url="${base}/token.html"
+      echo "  Open the access page, then paste the token jean prints below:"
+    fi
+    echo "    ${url}"
+    if command -v qrencode >/dev/null 2>&1; then
+      echo
+      qrencode -t UTF8 -m 1 "${url}" 2>/dev/null || true
+    fi
+  else
+    echo "  Set JEAN_PUBLIC_URL (e.g. https://jean.example.com) to print a ready"
+    echo "  login link + QR here. Otherwise open your domain and paste the token."
+  fi
+  if [ -n "${JEAN_TOKEN:-}" ]; then
+    echo "  Access token: ${JEAN_TOKEN}"
+  fi
+  echo "============================================================"
+}
+print_login_banner
 
 echo "[entrypoint] starting jean headless on ${JEAN_HOST}:${JEAN_PORT}"
 exec jean --headless --host "${JEAN_HOST}" --port "${JEAN_PORT}" "${AUTH_ARGS[@]}"
