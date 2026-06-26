@@ -39,14 +39,32 @@ jobs:
         uses: actions/checkout@v4
 
       # Base version = the jean release we bundle. From the dispatch input, else
-      # jean's latest release. The .deb only exists for release tags, never branches.
+      # the newest jean release that actually ships the amd64 AND arm64 .deb we
+      # build from. jean publishes the GitHub Release the instant it's tagged but
+      # its CI uploads the platform binaries minutes later, so `releases/latest`
+      # briefly points at an asset-less release - building against it 404s on the
+      # ADD. Skipping releases without both .deb assets makes the daily watcher
+      # (and pushes) wait for a complete release instead of failing. The .deb only
+      # exists for release tags, never branches.
       - name: Resolve jean version
         id: jean
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ref="${{ github.event.inputs.jean_ref }}"
-          [ -z "$ref" ] && ref="$(gh api repos/coollabsio/jean/releases/latest --jq .tag_name)"
+          if [ -z "$ref" ]; then
+            ref="$(gh api 'repos/coollabsio/jean/releases?per_page=20' --jq '
+              map(select(.draft==false and .prerelease==false))
+              | map(select(
+                  (.tag_name|ltrimstr("v")) as $v
+                  | (.assets|map(.name)) as $n
+                  | ($n|any(. == "Jean_"+$v+"_amd64.deb")) and ($n|any(. == "Jean_"+$v+"_arm64.deb"))
+                ))
+              | .[0].tag_name // empty')"
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::No jean release with both amd64+arm64 .deb assets found"; exit 1
+          fi
           echo "Bundling jean $ref"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 

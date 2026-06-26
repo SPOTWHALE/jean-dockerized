@@ -22,8 +22,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=$(gh api repos/coollabsio/jean/releases/latest --jq .tag_name)
-          echo "Latest jean release: $TAG"
+          # Newest jean release that actually ships both .deb assets we build
+          # from. jean tags the GitHub Release before its CI uploads the platform
+          # binaries, so `releases/latest` can briefly be asset-less; targeting it
+          # would dispatch a build that 404s. Wait for a complete release instead
+          # (mirrors release.yml's resolver).
+          TAG=$(gh api 'repos/coollabsio/jean/releases?per_page=20' --jq '
+            map(select(.draft==false and .prerelease==false))
+            | map(select(
+                (.tag_name|ltrimstr("v")) as $v
+                | (.assets|map(.name)) as $n
+                | ($n|any(. == "Jean_"+$v+"_amd64.deb")) and ($n|any(. == "Jean_"+$v+"_arm64.deb"))
+              ))
+            | .[0].tag_name // empty')
+          if [ -z "$TAG" ]; then
+            echo "No jean release with both .deb assets yet - skipping."
+            exit 0
+          fi
+          echo "Latest complete jean release: $TAG"
 
           # Already built this jean version? We'd have a release tagged $TAG<letter>.
           if gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
