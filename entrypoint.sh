@@ -44,6 +44,14 @@ if command -v dockerd >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
   for _ in $(seq 1 40); do docker info >/dev/null 2>&1 && break; sleep 0.5; done
   if docker info >/dev/null 2>&1; then
     echo "[entrypoint] docker ready"
+    # Watchdog: restart dockerd if it dies at runtime (parity with the caddy
+    # watchdog below), so agents' `docker` commands keep working after a crash.
+    ( while sleep 15; do
+        docker info >/dev/null 2>&1 && continue
+        echo "[entrypoint] dockerd died, restarting" >&2
+        dockerd --log-level warn >>/var/log/dockerd.log 2>&1 &
+        for _ in $(seq 1 40); do docker info >/dev/null 2>&1 && break; sleep 0.5; done
+      done ) &
   else
     echo "[entrypoint] dockerd did not start (is the container privileged?) - continuing without docker"
   fi

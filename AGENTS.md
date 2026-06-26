@@ -35,7 +35,20 @@ Single-stage `Dockerfile` (`debian:bookworm-slim`):
   e.g. `Jean_0.1.57_amd64.deb`), `dpkg-deb -x` unpacks it, then copies `usr/bin/jean` to
   `/usr/local/bin/jean` and `usr/lib/Jean/dist` to `/usr/local/bin/dist`. No compile.
 - installs git/ssh + the AI CLIs (`@anthropic-ai/claude-code`, `@openai/codex`) + a static
-  Caddy binary (`COPY --from=caddy:2`) for the preview proxy.
+  Caddy binary (`COPY --from=caddy:2.11.4`) for the preview proxy.
+
+**Multi-arch.** The image builds for `linux/amd64` **and** `linux/arm64` (release.yml
+`platforms:`). The Dockerfile reads buildx's `TARGETARCH` (`amd64`/`arm64`, which match
+Debian's arch names and jean's `.deb` asset suffix) to fetch the right jean `.deb` and the
+right Docker apt repo. Don't hard-code `amd64` again.
+
+**Supply chain.** The base is pinned by digest (`debian:bookworm-slim@sha256:…`, the multi-arch
+index digest so buildx still picks per-arch); bump with `docker buildx imagetools inspect
+debian:bookworm-slim`. The jean `.deb` is verified before unpacking: jean signs every release
+asset with a Tauri **minisign** key, so the Dockerfile `ADD`s the `.deb.sig` too, base64-decodes
+it (the asset is base64-wrapped) and runs `minisign -Vp jean-release.pub`. `jean-release.pub` is
+the pinned public key from upstream `src-tauri/tauri.conf.json` (`pubkey`, base64-decoded). If
+jean ever rotates that key, update `jean-release.pub` or every build fails the verify step.
 
 Two non-obvious runtime constraints, both load-bearing - do not "clean them up":
 1. **Xvfb is required.** The Tauri binary initializes a GTK event loop even in `--headless`
@@ -55,6 +68,10 @@ Two non-obvious runtime constraints, both load-bearing - do not "clean them up":
    apps (isolated storage). The injector also adds a guard script at the top of `index.html`:
    on `/` with no stored/URL token it redirects to `token.html`, so the bare domain self-serves
    the prompt (PWA `start_url` is `/`). `token.html` writes that exact key and redirects back.
+   `token.html` never auto-redirects away when visited directly (only on a `?token=` link), and
+   `?reset` clears the stored token - this is the **only** escape from a wrong/stale token, since
+   the app shows its own error and the guard would otherwise bounce you back into it. Don't
+   reintroduce an unconditional "token stored -> redirect to /" branch.
    Edit assets in `web/`, never jean's source.
 
 **Preview proxy.** A static Caddy binary (`COPY --from=caddy:2`) runs in the background from

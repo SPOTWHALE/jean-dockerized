@@ -11,7 +11,15 @@
 # JEAN_REF must be a published release tag (e.g. v0.1.57), not a branch.
 # =========================================================================
 
-FROM debian:bookworm-slim
+# Base pinned by digest for reproducible/supply-chain-safe builds. This is the
+# multi-arch index digest, so buildx still selects the right per-arch image.
+# Bump with: docker buildx imagetools inspect debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
+
+# Target architecture, populated automatically by buildx (amd64 / arm64). Used
+# below to fetch the matching jean .deb and Docker apt repo. Declared early so
+# every later stage can read it.
+ARG TARGETARCH
 
 # Runtime deps. The Tauri binary initializes a GTK event loop even in
 # --headless mode and panics "Failed to initialize GTK" without a display, so
@@ -43,7 +51,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 RUN install -m0755 -d /etc/apt/keyrings \
  && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
  && chmod a+r /etc/apt/keyrings/docker.asc \
- && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+ && echo "deb [arch=${TARGETARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
       > /etc/apt/sources.list.d/docker.list \
  && apt-get update && apt-get install -y --no-install-recommends \
       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
@@ -55,19 +63,32 @@ RUN printf '#!/bin/sh\nexec docker compose "$@"\n' > /usr/local/bin/docker-compo
 # Preview reverse proxy: a static Caddy binary that maps <port>.<domain> to
 # 127.0.0.1:<port> so dev servers the agent starts are viewable via a wildcard
 # domain. Pulled from the official image (single self-contained binary).
-COPY --from=caddy:2 /usr/bin/caddy /usr/local/bin/caddy
+COPY --from=caddy:2.11.4 /usr/bin/caddy /usr/local/bin/caddy
 COPY proxy/Caddyfile /etc/caddy/Caddyfile
 
 # Download jean's prebuilt binary for the pinned release and unpack the binary +
-# its on-disk frontend. The .deb is named with the version sans leading 'v'
-# (v0.1.57 -> Jean_0.1.57_amd64.deb). The remote ADD re-downloads only when
-# JEAN_REF changes (release assets are immutable per tag), so it caches well.
-ARG JEAN_REF=v0.1.57
-ADD https://github.com/coollabsio/jean/releases/download/${JEAN_REF}/Jean_${JEAN_REF#v}_amd64.deb /tmp/jean.deb
-RUN dpkg-deb -x /tmp/jean.deb /tmp/jean \
+# its on-disk frontend. The .deb is named with the version sans leading 'v' and
+# the target arch (v0.1.58 -> Jean_0.1.58_amd64.deb / Jean_0.1.58_arm64.deb).
+# Debian's arch names (amd64/arm64) match buildx's TARGETARCH exactly. The remote
+# ADD re-downloads only when the URL changes (release assets are immutable per
+# tag), so it caches well.
+ARG JEAN_REF=v0.1.58
+ADD https://github.com/coollabsio/jean/releases/download/${JEAN_REF}/Jean_${JEAN_REF#v}_${TARGETARCH}.deb /tmp/jean.deb
+ADD https://github.com/coollabsio/jean/releases/download/${JEAN_REF}/Jean_${JEAN_REF#v}_${TARGETARCH}.deb.sig /tmp/jean.deb.sig
+# Supply-chain check: this image carries live Claude/Codex creds + git push, so
+# the downloaded binary must be authentic. jean signs every release asset with a
+# Tauri minisign key; verify the .deb against the pinned public key (jean-release.pub)
+# BEFORE unpacking it. The .sig asset is base64-wrapped, so decode it to the raw
+# minisign format first. minisign is build-time only and purged in the same layer.
+COPY jean-release.pub /tmp/jean-release.pub
+RUN apt-get update && apt-get install -y --no-install-recommends minisign \
+ && base64 -d /tmp/jean.deb.sig > /tmp/jean.deb.minisig \
+ && minisign -Vp /tmp/jean-release.pub -m /tmp/jean.deb -x /tmp/jean.deb.minisig \
+ && apt-get purge -y minisign && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* \
+ && dpkg-deb -x /tmp/jean.deb /tmp/jean \
  && cp /tmp/jean/usr/bin/jean /usr/local/bin/jean \
  && cp -r /tmp/jean/usr/lib/Jean/dist /usr/local/bin/dist \
- && rm -rf /tmp/jean /tmp/jean.deb \
+ && rm -rf /tmp/jean /tmp/jean.deb /tmp/jean.deb.sig /tmp/jean.deb.minisig /tmp/jean-release.pub \
  && /usr/local/bin/jean --version
 
 # PWA + token-entry injection into the on-disk dist. Makes the headless web UI

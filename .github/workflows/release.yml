@@ -15,6 +15,7 @@ on:
     paths:
       - Dockerfile
       - entrypoint.sh
+      - jean-release.pub
       - proxy/**
       - web/**
       - .github/workflows/release.yml
@@ -95,10 +96,13 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64
+          # arm64 too: jean ships an arm64 .deb, so the same image runs on Apple
+          # Silicon servers, Ampere/Graviton VPSes, and Raspberry Pi. buildx fans
+          # out per platform and TARGETARCH picks the right .deb + Docker repo.
+          platforms: linux/amd64,linux/arm64
           push: true
-          # Single-platform image: skip the provenance/SBOM attestation so Docker
-          # Hub gets one plain image manifest, not an index + image + attestation triple.
+          # Skip provenance/SBOM attestations so the multi-arch index stays clean
+          # (one image per platform, no extra attestation manifests).
           provenance: false
           sbom: false
           build-args: |

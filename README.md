@@ -13,6 +13,7 @@ Run [Jean](https://github.com/coollabsio/jean) in your browser, on your server. 
 - **Browser UI** — Jean's full interface served over HTTPS, token-protected
 - **Preview URLs** — dev servers the agent starts are instantly reachable at `<port>.apps.your-domain` (same pattern as Codespaces/Gitpod)
 - **Docker-in-Docker** — agents can run `docker` and `docker compose`; requires `privileged: true`
+- **amd64 + arm64** — one image runs on x86 servers and ARM (Apple Silicon, Ampere/Graviton, Raspberry Pi)
 - **Persistent workspace** — repos, credentials, and settings survive redeploys
 - **Auto-updates** — watches Jean releases daily and rebuilds automatically
 
@@ -38,9 +39,13 @@ Run [Jean](https://github.com/coollabsio/jean) in your browser, on your server. 
 ## Run locally
 
 ```bash
+cp .env.example .env   # optional — set JEAN_TOKEN / preview auth
 docker compose up
 # open the ?token=... URL printed in the logs
 ```
+
+**Lost or changed your token?** Open `https://your-domain/token.html?reset` to clear
+the saved token and type a new one — works inside the installed PWA too.
 
 ## Preview URLs
 
@@ -58,6 +63,7 @@ Setup (Coolify):
 - One container per person — it holds live AI credentials and git push access
 - **Runs `privileged`** (required for Docker-in-Docker) — the container has host-level access. Treat it as trusted, single-tenant. Do **not** pack multiple users' containers onto one shared host; a privileged container can escape to the host and reach every other container on it.
 - Jean's web UI is token-protected; preview ports can be gated with `PREVIEW_PASSWORD`
+- The build verifies Jean's release `.deb` against its signing key (minisign) before baking it into the image, so a tampered release asset can't reach your credentials
 
 ### Multi-tenant / untrusted use
 

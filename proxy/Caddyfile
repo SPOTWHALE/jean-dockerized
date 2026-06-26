@@ -26,7 +26,8 @@
 	}
 
 	handle @blocked {
-		respond "Forbidden: reserved port" 403
+		header Content-Type "text/html; charset=utf-8"
+		respond `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Forbidden</title><body style="margin:0;min-height:100dvh;display:grid;place-items:center;background:#0b0b0c;color:#e7e7ea;font:16px/1.5 system-ui,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:20px;margin:0 0 8px">Reserved port 🚫</h1><p style="margin:0;color:#9b9ba3">Ports below 1024 and Jean's own ports can't be previewed. Use a dev-server port in the 1024–65535 range.</p></div>` 403
 	}
 
 	handle @withport {
@@ -39,6 +40,7 @@
 	}
 
 	handle {
-		respond "Preview proxy. Open https://<port>.<your-preview-domain> and make sure the dev server binds 0.0.0.0:<port>." 404
+		header Content-Type "text/html; charset=utf-8"
+		respond `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Preview proxy</title><body style="margin:0;min-height:100dvh;display:grid;place-items:center;background:#0b0b0c;color:#e7e7ea;font:16px/1.5 system-ui,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:20px;margin:0 0 8px">Preview proxy 🔌</h1><p style="margin:0;color:#9b9ba3">Open <code>https://&lt;port&gt;.&lt;your-preview-domain&gt;</code> and make sure the dev server binds <code>0.0.0.0:&lt;port&gt;</code>.</p></div>` 404
 	}
 }

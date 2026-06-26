@@ -27,6 +27,7 @@
     background: #5b5bd6; color: #fff; font-size: 16px; font-weight: 600; cursor: pointer;
   }
   button:active { transform: translateY(1px); }
+  a { color: #8b8bf0; }
 </style>
 </head>
 <body>
@@ -36,16 +37,28 @@
   <input id="t" type="password" inputmode="text" autocomplete="off"
          autocapitalize="off" spellcheck="false" placeholder="access token" required>
   <button type="submit">Save &amp; open</button>
+  <p id="open" hidden>A token is already saved on this device.
+     <a href="/" id="openlink">Open Jean →</a></p>
 </form>
 <script>
   // transport.ts reads the token from this exact localStorage key.
   var KEY = 'jean-http-token';
-  var urlToken = new URLSearchParams(location.search).get('token');
+  var params = new URLSearchParams(location.search);
+  var urlToken = params.get('token');
 
   // A token in the URL always wins (lets you re-key a device via a link).
   if (urlToken) { localStorage.setItem(KEY, urlToken); location.replace('/'); }
-  // Already provisioned on this device? Skip straight to the app.
-  else if (localStorage.getItem(KEY)) { location.replace('/'); }
+  else {
+    // `?reset` clears a bad/stale token. This page is the ONLY escape hatch when
+    // a wrong token is stored: the app shows its own error and the index guard
+    // would otherwise bounce you straight back into it. Visiting /token.html
+    // (optionally with ?reset) always shows this form instead of auto-redirecting,
+    // so a token can always be replaced — even inside an installed PWA.
+    if (params.has('reset')) localStorage.removeItem(KEY);
+    // If a token is already saved, offer a one-tap link back to the app, but
+    // still let the user type a new one to overwrite it.
+    if (localStorage.getItem(KEY)) document.getElementById('open').hidden = false;
+  }
 
   document.getElementById('f').addEventListener('submit', function (e) {
     e.preventDefault();
