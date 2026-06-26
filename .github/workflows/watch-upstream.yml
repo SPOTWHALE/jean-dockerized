@@ -1,0 +1,38 @@
+name: Watch jean releases
+
+# Poll coollabsio/jean daily. When a jean version appears that we haven't built
+# yet, dispatch release.yml to build it. release.yml versions the build as
+# <jean-version><letter> (e.g. v0.1.58a) and creates the GitHub Release.
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily 06:00 UTC
+  workflow_dispatch: {} # allow a manual check
+
+permissions:
+  actions: write # dispatch release.yml
+  contents: read # read existing releases
+
+jobs:
+  check:
+    name: Trigger build on new jean version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Dispatch build if jean has a newer version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh api repos/coollabsio/jean/releases/latest --jq .tag_name)
+          echo "Latest jean release: $TAG"
+
+          # Already built this jean version? We'd have a release tagged $TAG<letter>.
+          if gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+            --json tagName --jq '.[].tagName' | grep -qE "^${TAG}[a-z]$"; then
+            echo "Already built $TAG - skipping."
+            exit 0
+          fi
+
+          echo "Dispatching build for $TAG"
+          gh workflow run release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --field jean_ref="$TAG"

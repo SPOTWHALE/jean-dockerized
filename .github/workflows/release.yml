@@ -1,0 +1,124 @@
+name: Release
+
+# Every build gets its own immutable version, combining jean's version with a
+# wrapper revision letter: jean v0.1.57 + wrapper build -> v0.1.57a, v0.1.57b, ...
+# A new jean version resets the letter (v0.1.58a). Triggered by:
+#   - push to master      -> wrapper code changed; rebuild on current jean
+#   - workflow_dispatch    -> watch-upstream found a new jean version (or manual)
+on:
+  push:
+    branches: [master]
+    # Only rebuild when something baked into the image changes. Docs, compose,
+    # license, and other repo files don't affect the image, so skip them.
+    # NOTE: paths filters apply to push only; workflow_dispatch (the upstream
+    # watcher / new-jean-version builds) ignores them and always builds.
+    paths:
+      - Dockerfile
+      - entrypoint.sh
+      - proxy/**
+      - web/**
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      jean_ref:
+        description: "jean release tag to build (e.g. v0.1.57); blank = latest"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # create the GitHub Release + tag for each build
+
+jobs:
+  release:
+    name: Release - Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Base version = the jean release we bundle. From the dispatch input, else
+      # jean's latest release. The .deb only exists for release tags, never branches.
+      - name: Resolve jean version
+        id: jean
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ref="${{ github.event.inputs.jean_ref }}"
+          [ -z "$ref" ] && ref="$(gh api repos/coollabsio/jean/releases/latest --jq .tag_name)"
+          echo "Bundling jean $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      # Full version = jean version + next free wrapper letter. Look at existing
+      # releases for this jean version and pick the next letter (a, b, c, ...).
+      - name: Compute version tag
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          base="${{ steps.jean.outputs.ref }}"
+          existing=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+            --json tagName --jq '.[].tagName' | grep -E "^${base}[a-z]$" | sort || true)
+          if [ -z "$existing" ]; then
+            suffix=a
+          else
+            last=$(echo "$existing" | tail -n1 | sed -E "s/^${base}//")
+            if [ "$last" = "z" ]; then
+              echo "::error::Ran out of wrapper letters (z) for $base"; exit 1
+            fi
+            suffix=$(printf "\\$(printf '%03o' $(( $(printf '%d' "'$last") + 1 )))")
+          fi
+          tag="${base}${suffix}"
+          echo "Version tag: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Docker - Login
+        uses: docker/login-action@v3
+        with:
+          username: '${{ secrets.DOCKER_USERNAME }}'
+          password: '${{ secrets.DOCKER_PASSWORD }}'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker - Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            spotwhale/jean-dockerized
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.tag }}
+            type=raw,value=latest
+
+      - name: Docker - Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          # Single-platform image: skip the provenance/SBOM attestation so Docker
+          # Hub gets one plain image manifest, not an index + image + attestation triple.
+          provenance: false
+          sbom: false
+          build-args: |
+            JEAN_REF=${{ steps.jean.outputs.ref }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Record the build. Created only after a successful push so the Releases
+      # page never lists a version that didn't actually publish.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          JEAN="${{ steps.jean.outputs.ref }}"
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes "Bundles jean [$JEAN](https://github.com/coollabsio/jean/releases/tag/$JEAN)." \
+            --latest
