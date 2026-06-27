@@ -225,6 +225,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write # create the GitHub Release + tag for each build
+      actions: write # `gh workflow run image-status.yml` to refresh the badge
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
