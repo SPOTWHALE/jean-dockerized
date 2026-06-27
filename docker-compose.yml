@@ -34,8 +34,16 @@ services:
       PREVIEW_PORT: 8088
       # Preview subdomains are DISABLED (403) until you set PREVIEW_PASSWORD. Set it
       # to gate every preview port behind one basic-auth login (PREVIEW_USER: dev).
+      # The bundled Theia IDE is reached through this same gate, so PREVIEW_PASSWORD
+      # is required to open it too.
       # PREVIEW_USER: dev
       # PREVIEW_PASSWORD: change-me
+      # Bundled Theia IDE. It runs on 127.0.0.1:THEIA_PORT and is reached via the
+      # preview proxy at https://<THEIA_PORT>.<your-wildcard-domain>. The in-app
+      # "</> IDE" button opens that URL; set THEIA_PUBLIC_URL when your preview
+      # wildcard is not just <port>.<jean-host> (e.g. *.apps.you.dev).
+      # THEIA_PORT: 8443
+      # THEIA_PUBLIC_URL: https://8443.apps.you.dev
       # Public URL of this instance. When set, the startup banner prints a ready
       # login link (and a scannable QR) so onboarding is one tap on a phone.
       # JEAN_PUBLIC_URL: https://jean.example.com

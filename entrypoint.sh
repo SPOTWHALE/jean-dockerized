@@ -98,6 +98,50 @@ if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
   fi
 fi
 
+# Theia IDE: the bundled browser editor (built into /opt/theia). Runs headless on
+# 127.0.0.1:${THEIA_PORT} so it is reachable ONLY through the preview proxy at
+# https://<THEIA_PORT>.<preview-wildcard> - never bound to a public interface.
+# Theia ships no auth of its own; the preview basic-auth gate (PREVIEW_PASSWORD)
+# is the lock, and it fails closed (403) when that is unset. HOME=/workspace, so
+# Theia's settings persist under /workspace/.theia on the volume. Optional -
+# skipped if the app or node is absent.
+THEIA_PORT="${THEIA_PORT:-8443}"
+if [ -f /opt/theia/src-gen/backend/main.js ] && command -v node >/dev/null 2>&1; then
+  # Tell the injected launcher (web/theia-launch.js) where to open the IDE. Prefer
+  # an explicit THEIA_PUBLIC_URL; otherwise the launcher falls back to
+  # <port>.<current-host>. Written into jean's served dist before jean starts.
+  DIST=/usr/local/bin/dist
+  if [ -d "$DIST" ]; then
+    {
+      printf "window.__THEIA_PORT__='%s'\n" "${THEIA_PORT}"
+      if [ -n "${THEIA_PUBLIC_URL:-}" ]; then
+        printf "window.__THEIA_URL__='%s'\n" "${THEIA_PUBLIC_URL%/}/"
+      fi
+    } > "$DIST/theia-config.js"
+  fi
+
+  echo "[entrypoint] starting Theia IDE on 127.0.0.1:${THEIA_PORT}"
+  start_theia() {
+    node /opt/theia/src-gen/backend/main.js /workspace \
+      --hostname 127.0.0.1 --port "${THEIA_PORT}" >/tmp/theia.log 2>&1 &
+    THEIA_PID=$!
+  }
+  start_theia
+  sleep 2
+  if ! kill -0 "$THEIA_PID" 2>/dev/null; then
+    echo "[entrypoint] WARNING: Theia exited immediately, IDE unavailable" >&2
+    cat /tmp/theia.log >&2
+  else
+    echo "[entrypoint] Theia IDE ready"
+    # Watchdog: restart Theia if it crashes at runtime (parity with caddy/dockerd).
+    ( while sleep 15; do
+        kill -0 "$THEIA_PID" 2>/dev/null && continue
+        echo "[entrypoint] Theia died, restarting" >&2
+        start_theia
+      done ) &
+  fi
+fi
+
 # Auth: jean generates+persists a token by default (in the workspace volume).
 # Override with a stable token via JEAN_TOKEN. Auth is always on by design --
 # this wrapper deliberately does not expose jean's --no-token flag.

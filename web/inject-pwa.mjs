@@ -44,7 +44,9 @@ const tags = `
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Jean">
     <script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}</script>
-${versionTags}`
+${versionTags}    <script src="/theia-config.js" defer></script>
+    <script src="/theia-launch.js" defer></script>
+`
 
 if (!html.includes('</head>') || !html.includes('<head>')) {
   console.error('[pwa] no <head>…</head> found in index.html')
@@ -56,6 +58,6 @@ html = html.replace('<head>', '<head>\n    ' + guard)
 html = html.replace('</head>', tags + '  </head>')
 writeFileSync(file, html)
 console.log(
-  '[pwa] injected token guard, manifest, icons, and service worker' +
+  '[pwa] injected token guard, manifest, icons, service worker, and Theia launcher' +
     (imageVersion ? ` + version badge (${imageVersion})` : '')
 )

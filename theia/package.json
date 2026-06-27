@@ -1,0 +1,53 @@
+{
+  "private": true,
+  "//": "Browser-flavored Eclipse Theia app bundled into jean-dockerized. Built in a",
+  "//build": "Dockerfile stage (yarn theia build) and run headless next to jean. Reached",
+  "//reach": "through the existing preview proxy at https://<THEIA_PORT>.<preview-wildcard>",
+  "//auth": "- never exposed on its own host port. Theia ships no auth; the preview",
+  "//gate": "basic-auth (fails closed without PREVIEW_PASSWORD) is the lock.",
+  "theia": {
+    "frontend": {
+      "config": {
+        "applicationName": "Jean IDE",
+        "preferences": {
+          "files.enableTrash": false,
+          "security.workspace.trust.enabled": false
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@theia/callhierarchy": "latest",
+    "@theia/debug": "latest",
+    "@theia/editor-preview": "latest",
+    "@theia/file-search": "latest",
+    "@theia/getting-started": "latest",
+    "@theia/git": "latest",
+    "@theia/keymaps": "latest",
+    "@theia/markers": "latest",
+    "@theia/messages": "latest",
+    "@theia/monaco": "latest",
+    "@theia/navigator": "latest",
+    "@theia/outline-view": "latest",
+    "@theia/plugin-ext": "latest",
+    "@theia/plugin-ext-vscode": "latest",
+    "@theia/preferences": "latest",
+    "@theia/preview": "latest",
+    "@theia/process": "latest",
+    "@theia/scm": "latest",
+    "@theia/search-in-workspace": "latest",
+    "@theia/terminal": "latest",
+    "@theia/typehierarchy": "latest",
+    "@theia/userstorage": "latest",
+    "@theia/vsx-registry": "latest",
+    "@theia/workspace": "latest"
+  },
+  "devDependencies": {
+    "@theia/cli": "latest"
+  },
+  "theiaPluginsDir": "plugins",
+  "theiaPlugins": {},
+  "//plugins": "Left empty on purpose: language support / extensions are installed at",
+  "//runtime": "runtime from Open VSX via the built-in @theia/vsx-registry view, so the",
+  "//why": "image is not pinned to a frozen, soon-stale builtin VSIX set."
+}
