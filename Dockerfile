@@ -24,7 +24,9 @@
 # =========================================================================
 FROM node:22-bookworm AS theia-builder
 WORKDIR /opt/theia
-COPY theia/package.json ./package.json
+# webpack.config.js forces the webpack bundler: recent @theia/cli defaults to
+# esbuild, which can't resolve the `~octicons` tilde import in @theia/git's CSS.
+COPY theia/package.json theia/webpack.config.js ./
 # node:22-bookworm (non-slim) already ships build-essential + python3 for
 # node-gyp. The -dev headers below let node-pty / keytar compile.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -35,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && yarn theia download:plugins \
  && yarn install --production --network-timeout 600000 \
  && yarn autoclean --init \
+ && sed -i '/^test$/d;/^tests$/d' .yarnclean \
  && printf '%s\n' '*.ts' '*.ts.map' '*.spec.*' >> .yarnclean \
  && yarn autoclean --force \
  && yarn cache clean
@@ -135,7 +138,7 @@ ARG IMAGE_VERSION=
 RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-bin \
  && cp /tmp/web/manifest.webmanifest /tmp/web/sw.js /tmp/web/token.html \
       /tmp/web/version-badge.js /tmp/web/theia-launch.js /usr/local/bin/dist/ \
- && printf "window.__THEIA_PORT__='8443'\n" > /usr/local/bin/dist/theia-config.js \
+ && printf "window.__THEIA_HOST_SUFFIX__=''\n" > /usr/local/bin/dist/theia-config.js \
  && rsvg-convert -w 192 -h 192 /tmp/web/icon.svg -o /usr/local/bin/dist/icon-192.png \
  && rsvg-convert -w 512 -h 512 /tmp/web/icon.svg -o /usr/local/bin/dist/icon-512.png \
  && rsvg-convert -w 180 -h 180 /tmp/web/icon.svg -o /usr/local/bin/dist/apple-touch-icon.png \
@@ -143,12 +146,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-bin \
  && apt-get purge -y librsvg2-bin \
  && rm -rf /var/lib/apt/lists/* /tmp/web
 
-# Bundled Theia IDE, built in the theia-builder stage. Runs headless on
-# 127.0.0.1:${THEIA_PORT} (entrypoint.sh) and is reached only through the preview
-# proxy at https://<THEIA_PORT>.<preview-wildcard> - never its own host port.
-# THEIA_DEFAULT_PLUGINS points at the (currently empty) bundled plugin dir;
-# extensions are installed at runtime from Open VSX via the vsx-registry view.
+# Bundled Theia IDE, built in the theia-builder stage. entrypoint.sh runs the
+# dispatcher (theia-dispatcher.mjs) which lazily spawns one Theia per git worktree on
+# 127.0.0.1 and routes <slug>.<preview-wildcard> -> that worktree - reached only through
+# the preview proxy, never its own host port. THEIA_DEFAULT_PLUGINS points at the
+# (currently empty) bundled plugin dir; extensions install at runtime from Open VSX.
 COPY --from=theia-builder /opt/theia /opt/theia
+# The per-worktree dispatcher (zero-dep node) lives next to the Theia build.
+COPY web/theia-dispatcher.mjs /opt/theia/theia-dispatcher.mjs
 # THEIA_WEBVIEW_EXTERNAL_ENDPOINT={{hostname}} serves webviews (markdown preview,
 # many extensions) from the same origin. The default `{{uuid}}.webview.{{hostname}}`
 # needs a per-webview wildcard subdomain, which the numeric-only preview proxy

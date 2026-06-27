@@ -1,69 +1,105 @@
-// Adds a floating "IDE" button to jean's headless web UI that opens the bundled
-// Eclipse Theia editor in a new tab. Theia runs headless inside this container on
-// 127.0.0.1:<THEIA_PORT> and is reached through the existing preview proxy at
-// https://<THEIA_PORT>.<preview-wildcard> - it is never exposed on its own host
-// port. jean is not forked; like version-badge.js we only touch the rendered DOM.
+// Adds a "</> IDE" button to jean's top-right session toolbar. It opens a per-worktree
+// scoped Eclipse Theia editor (one Theia rooted at the active repo/branch worktree),
+// served by web/theia-dispatcher.mjs through the preview proxy:
 //
-// The Theia URL comes from /theia-config.js (window.__THEIA_URL__), which
-// entrypoint.sh writes at startup from THEIA_PUBLIC_URL. If that is unset we fall
-// back to prefixing the current host with the Theia port, which matches a
-// <port>.<domain> preview-wildcard deploy. Auth is the preview basic-auth gate,
-// so the editor is only reachable once PREVIEW_PASSWORD is set (fails closed).
+//   known worktree -> <slug>.<suffix>/?ws=<path>   (dispatcher roots Theia at <path>)
+//   unknown        -> ide.<suffix>                 (dispatcher's worktree picker)
+//
+// COSMETIC scoping only - NOT a security boundary (the Theia terminal still reaches all
+// of /workspace). jean is NOT forked; like version-badge.js we only touch rendered DOM
+// and listen to jean's own CustomEvents - we never reach into its React state.
+//
+// The host suffix comes from /theia-config.js (window.__THEIA_HOST_SUFFIX__), written by
+// entrypoint.sh from THEIA_HOST_SUFFIX (the preview wildcard, e.g. .apps.you.dev or
+// .localhost:8088). Auth is the preview basic-auth gate (fails closed without PREVIEW_PASSWORD).
 (function () {
   var BTN_ID = 'jd-ide-btn'
+  // Latest worktree directory jean told us about, via its CustomEvents. Null until the
+  // user opens/switches a worktree; the button falls back to the picker meanwhile.
+  var currentWorktreePath = null
 
-  function theiaUrl() {
-    if (window.__THEIA_URL__) return window.__THEIA_URL__
-    var port = window.__THEIA_PORT__ || '8443'
-    // <port>.<current-host>, e.g. jean at code.example.com -> 8443.code.example.com.
-    // Deploys whose preview wildcard is *.apps.<domain> should set THEIA_PUBLIC_URL.
-    return location.protocol + '//' + port + '.' + location.hostname + '/'
+  function slugify(s) {
+    return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  }
+  function suffix() {
+    var s = window.__THEIA_HOST_SUFFIX__ || ('.' + location.host)
+    return s.charAt(0) === '.' ? s : '.' + s
+  }
+  // jean sets document.title to "<repo> › <worktree> (<branch>)" for the active
+  // worktree (just "Jean" when nothing is open) - a reliable on-load signal that needs
+  // no React/DOM coupling. Parse repo+branch from it.
+  function fromTitle() {
+    var t = document.title || ''
+    var i = t.indexOf('›') // ›
+    if (i < 0) return null
+    var repo = t.slice(0, i).trim()
+    var rest = t.slice(i + 1).trim()
+    var m = rest.match(/\(([^)]+)\)\s*$/) // branch in parens when it differs from name
+    var branch = (m ? m[1] : rest).trim()
+    return repo && branch ? { repo: repo, branch: branch } : null
+  }
+  function targetUrl() {
+    // Most precise: an exact worktree path captured from a jean switch event.
+    if (currentWorktreePath) {
+      var leaf = currentWorktreePath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'workspace'
+      return location.protocol + '//' + slugify(leaf) + suffix() +
+        '/?ws=' + encodeURIComponent(currentWorktreePath)
+    }
+    // On load: derive repo+branch from the title; the dispatcher resolves the worktree.
+    var t = fromTitle()
+    if (t) {
+      return location.protocol + '//' + slugify(t.repo + '-' + t.branch) + suffix() +
+        '/?repo=' + encodeURIComponent(t.repo) + '&branch=' + encodeURIComponent(t.branch)
+    }
+    // Nothing open -> the picker.
+    return location.protocol + '//ide' + suffix() + '/'
   }
 
-  function makeButton() {
-    var btn = document.createElement('button')
+  // jean broadcasts worktree/session activity as window CustomEvents whose detail often
+  // carries the worktree path (e.g. open-worktree-modal -> {worktreeId, worktreePath}).
+  // Track the most recent one so the button opens "the current worktree".
+  ;['open-worktree-modal', 'switch-session', 'session-opened', 'open-worktree-by-index',
+    'create-new-session', 'create-new-worktree', 'switch-worktree'].forEach(function (name) {
+    window.addEventListener(name, function (e) {
+      var d = (e && e.detail) || {}
+      var p = d.worktreePath || d.path || (d.worktree && d.worktree.path)
+      if (p && typeof p === 'string') currentWorktreePath = p
+    })
+  })
+
+  function makeButton(template) {
+    var btn = template.cloneNode(true)
     btn.id = BTN_ID
-    btn.type = 'button'
-    btn.title = 'Open the Theia IDE (requires PREVIEW_PASSWORD to be set)'
-    btn.textContent = '</> IDE'
-    btn.style.cssText = [
-      'position:fixed',
-      'right:16px',
-      'bottom:16px',
-      'z-index:2147483647',
-      'padding:8px 12px',
-      'border:0',
-      'border-radius:9999px',
-      'background:#2563eb',
-      'color:#fff',
-      'font:600 13px/1 system-ui,sans-serif',
-      'box-shadow:0 2px 8px rgba(0,0,0,.35)',
-      'cursor:pointer'
-    ].join(';')
-    btn.addEventListener('mouseenter', function () {
-      btn.style.background = '#1d4ed8'
-    })
-    btn.addEventListener('mouseleave', function () {
-      btn.style.background = '#2563eb'
-    })
-    btn.addEventListener('click', function () {
-      window.open(theiaUrl(), '_blank', 'noopener')
-    })
+    btn.setAttribute('type', 'button')
+    btn.setAttribute('aria-label', 'Open the Theia IDE')
+    btn.setAttribute('title', 'Open the Theia IDE for the current worktree (needs PREVIEW_PASSWORD)')
+    btn.removeAttribute('data-state')
+    btn.removeAttribute('data-slot')
+    while (btn.firstChild) btn.removeChild(btn.firstChild)
+    var glyph = document.createElement('span')
+    glyph.textContent = '</>'
+    glyph.style.fontWeight = '700'
+    btn.appendChild(glyph)
+    btn.appendChild(document.createTextNode(' IDE'))
+    btn.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation()
+      window.open(targetUrl(), '_blank', 'noopener')
+    }, true)
     return btn
   }
 
   function mount() {
     if (document.getElementById(BTN_ID)) return
-    if (!document.body) return
-    document.body.appendChild(makeButton())
+    var term = document.querySelector('button[aria-label="Toggle terminal"]')
+    if (!term) return
+    var wrapper = term.parentElement
+    var cluster = wrapper && wrapper.parentElement
+    if (!cluster) return
+    cluster.insertBefore(makeButton(term), cluster.firstChild)
   }
 
-  if (document.readyState === 'loading') {
-    addEventListener('DOMContentLoaded', mount)
-  } else {
-    mount()
-  }
-  // jean re-renders its React tree; if the button ever gets detached, re-add it.
+  if (document.readyState === 'loading') addEventListener('DOMContentLoaded', mount)
+  else mount()
   new MutationObserver(function () {
     if (!document.getElementById(BTN_ID)) mount()
   }).observe(document.documentElement, { childList: true, subtree: true })
