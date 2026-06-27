@@ -41,7 +41,8 @@ jobs:
         run: |
           set -euo pipefail
           # Files baked into the image. Keep in sync with release.yml's context.
-          FILES="Dockerfile entrypoint.sh jean-release.pub proxy web theia"
+          # Dockerfile.theia + theia/ feed the prebuilt Theia base image.
+          FILES="Dockerfile Dockerfile.theia entrypoint.sh jean-release.pub proxy web theia"
           LAST=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 \
             --json tagName --jq '.[0].tagName // empty')
           if [ -z "$LAST" ]; then

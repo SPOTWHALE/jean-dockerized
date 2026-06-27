@@ -17,6 +17,10 @@ build/run plumbing.
 ## Common commands
 
 ```bash
+# Theia is prebuilt under the `theia-base` tag of the same image repo. Build it
+# once (slow: webpack), then the main image just COPYs it in. Re-run only after
+# changing theia/.
+docker build -f Dockerfile.theia -t spotwhale/jean-dockerized:theia-base .   # ~5-10 min
 docker build --build-arg JEAN_REF=v0.1.57 -t spotwhale/jean-dockerized . # ~2 min (no compile)
 docker compose up -d            # run (uses the published/built image; no build: section)
 docker compose logs -f          # follow runtime logs; startup banner prints the auth token
@@ -37,10 +41,15 @@ Single-stage `Dockerfile` (`debian:bookworm-slim`):
 - installs git/ssh + the AI CLIs (`@anthropic-ai/claude-code`, `@openai/codex`) + a static
   Caddy binary (`COPY --from=caddy:2.11.4`) for the preview proxy.
 
-**Multi-arch.** The image builds for `linux/amd64` **and** `linux/arm64` (release.yml
-`platforms:`). The Dockerfile reads buildx's `TARGETARCH` (`amd64`/`arm64`, which match
-Debian's arch names and jean's `.deb` asset suffix) to fetch the right jean `.deb` and the
-right Docker apt repo. Don't hard-code `amd64` again.
+**Multi-arch (native runners, no QEMU).** The image builds for `linux/amd64` **and**
+`linux/arm64`. `release.yml` is a 3-job pipeline: `prepare` resolves the jean ref + wrapper
+version tag + pinned Theia base digest; `build` is a matrix that builds each arch on its OWN
+native runner (`ubuntu-latest` for amd64, `ubuntu-24.04-arm` for arm64) and pushes by digest;
+`release` stitches the digests into the multi-arch manifest, tags it, and creates the GitHub
+Release. No emulation - the old single-job `platforms: amd64,arm64` build compiled Theia under
+QEMU for arm64 and timed out at 30m. The Dockerfile still reads buildx's `TARGETARCH`
+(`amd64`/`arm64`, which match Debian's arch names and jean's `.deb` asset suffix) to fetch the
+right jean `.deb` and Docker apt repo. Don't hard-code `amd64` again.
 
 **Supply chain.** The base is pinned by digest (`debian:bookworm-slim@sha256:…`, the multi-arch
 index digest so buildx still picks per-arch); bump with `docker buildx imagetools inspect
@@ -99,8 +108,15 @@ So previews are disabled until `PREVIEW_PASSWORD` is set, then gated behind one 
 revert this to an empty/open default - it would expose every loopback port to the internet.
 
 **Built-in IDE (Theia).** A browser-flavored Eclipse Theia app (`theia/package.json`) is built in
-a dedicated Dockerfile stage (`FROM node:22-bookworm AS theia-builder`, matched to the final
-image's Debian/Node so `node-pty` is ABI-compatible) and copied to `/opt/theia`. `entrypoint.sh`
+a **prebuilt base image** (`Dockerfile.theia`, `FROM node:22-bookworm`, matched to the final
+image's Debian/Node so `node-pty` is ABI-compatible), published multi-arch under the
+`theia-base` tag of the **same** repo (`spotwhale/jean-dockerized:theia-base`, not a separate
+repo) by `.github/workflows/theia-base.yml` (native matrix runners, push-by-digest + manifest
+merge; triggers on `theia/**`). The main Dockerfile aliases it as a stage (`FROM ${THEIA_BASE}
+AS theia` - `--from` can't expand a var directly) and pulls the built app via `COPY --from=theia
+/opt/theia /opt/theia`. `THEIA_BASE` is pinned to a digest by `release.yml`'s `prepare` job and
+defaults to the `theia-base` tag for local builds. This keeps Theia's slow webpack build off the
+jean-release hot path - releases no longer compile it. `entrypoint.sh`
 runs it headless on `127.0.0.1:${THEIA_PORT}` (default 8443) with a crash watchdog, so it is
 reachable **only through the preview proxy** at `https://<THEIA_PORT>.<wildcard>` - no extra host
 port. Theia ships **no auth**, so the preview basic-auth gate is the lock (unset `PREVIEW_PASSWORD`

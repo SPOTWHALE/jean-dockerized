@@ -11,6 +11,13 @@ name: Release
 #   - workflow_dispatch (watcher)  -> bump jean only: watch-upstream passes the
 #                                     commit of the last published wrapper release
 #                                     as repo_ref, so master WIP is ignored.
+#
+# Build topology (3 jobs):
+#   prepare -> build (matrix: amd64 + arm64, NATIVE runners) -> release (merge)
+# The per-arch images build on native runners (no QEMU) and push by DIGEST; the
+# release job stitches them into the multi-arch manifest and tags it. Theia is
+# NOT compiled here - it comes prebuilt from the same repo's `theia-base` tag
+# (Dockerfile.theia / theia-base.yml), pinned to a digest by `prepare`.
 on:
   workflow_dispatch:
     inputs:
@@ -24,13 +31,31 @@ on:
         default: ""
 
 permissions:
-  contents: write # create the GitHub Release + tag for each build
+  contents: read
+
+# Serialize releases so two overlapping dispatches can't race on the wrapper
+# letter (both reading the same "last letter" before either publishes).
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  IMAGE: spotwhale/jean-dockerized
+  THEIA_TAG: theia-base # prebuilt Theia base, same repo (published by theia-base.yml)
 
 jobs:
-  release:
-    name: Release - Docker image
+  # Resolve everything that must be decided ONCE (not per-arch): the jean
+  # release to bundle, this build's wrapper version tag, the exact source commit,
+  # and the pinned Theia base digest. All flow to the matrix build as outputs.
+  prepare:
+    name: Prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
+    outputs:
+      jean_ref: ${{ steps.jean.outputs.ref }}
+      tag: ${{ steps.ver.outputs.tag }}
+      sha: ${{ steps.src.outputs.sha }}
+      theia_base: ${{ steps.theia.outputs.base }}
     steps:
       # Build the requested repo state. Blank repo_ref -> the branch this dispatch
       # ran on (master HEAD), i.e. your latest pushed changes. The watcher passes a
@@ -101,57 +126,141 @@ jobs:
           echo "Version tag: $tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      # Logged in so the digest inspect below works even if the Theia base repo
+      # is private, and to avoid anonymous Docker Hub rate limits.
       - name: Docker - Login
         uses: docker/login-action@v3
         with:
-          username: '${{ secrets.DOCKER_USERNAME }}'
-          password: '${{ secrets.DOCKER_PASSWORD }}'
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Pin the Theia base to its current digest so every arch in the matrix
+      # copies the exact same prebuilt /opt/theia, and the release is reproducible
+      # (no mutable :latest baked into an image that carries live creds). If the
+      # base was never built, fail loud with the fix.
+      - name: Pin Theia base digest
+        id: theia
+        run: |
+          if ! digest=$(docker buildx imagetools inspect "${IMAGE}:${THEIA_TAG}" \
+                          --format '{{.Manifest.Digest}}' 2>/dev/null) || [ -z "$digest" ]; then
+            echo "::error::${IMAGE}:${THEIA_TAG} not found. Run the 'Theia base image' workflow first."
+            exit 1
+          fi
+          base="${IMAGE}@${digest}"
+          echo "Theia base: $base"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+  # Build each arch on its own NATIVE runner (no QEMU) and push by digest. The
+  # release job below assembles the multi-arch manifest from these digests.
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.repo_ref }}
+
+      - name: Docker - Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker - Metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            spotwhale/jean-dockerized
-          tags: |
-            type=raw,value=${{ steps.ver.outputs.tag }}
-            type=raw,value=latest
-
-      - name: Docker - Build and Push
-        uses: docker/build-push-action@v5
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
-          # arm64 too: jean ships an arm64 .deb, so the same image runs on Apple
-          # Silicon servers, Ampere/Graviton VPSes, and Raspberry Pi. buildx fans
-          # out per platform and TARGETARCH picks the right .deb + Docker repo.
-          platforms: linux/amd64,linux/arm64
-          push: true
-          # Skip provenance/SBOM attestations so the multi-arch index stays clean
-          # (one image per platform, no extra attestation manifests).
+          platforms: ${{ matrix.platform }}
           provenance: false
           sbom: false
           build-args: |
-            JEAN_REF=${{ steps.jean.outputs.ref }}
-            IMAGE_VERSION=${{ steps.ver.outputs.tag }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            JEAN_REF=${{ needs.prepare.outputs.jean_ref }}
+            IMAGE_VERSION=${{ needs.prepare.outputs.tag }}
+            THEIA_BASE=${{ needs.prepare.outputs.theia_base }}
+          cache-from: type=gha,scope=release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
-      # Record the build. Created only after a successful push so the Releases
-      # page never lists a version that didn't actually publish.
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Stitch the per-arch digests into the published multi-arch manifest, tag it
+  # (version + latest), record the GitHub Release, and refresh the status badge.
+  release:
+    name: Release - publish manifest
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the GitHub Release + tag for each build
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: release-digest-*
+          merge-multiple: true
+
+      - name: Docker - Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create and push manifest
+        working-directory: /tmp/digests
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE}:${TAG}" \
+            -t "${IMAGE}:latest" \
+            $(printf "${IMAGE}@sha256:%s " *)
+          docker buildx imagetools inspect "${IMAGE}:${TAG}"
+
+      # Record the build. Created only after a successful manifest push so the
+      # Releases page never lists a version that didn't actually publish.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          JEAN: ${{ needs.prepare.outputs.jean_ref }}
+          SHA: ${{ needs.prepare.outputs.sha }}
         run: |
-          TAG="${{ steps.ver.outputs.tag }}"
-          JEAN="${{ steps.jean.outputs.ref }}"
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "${{ steps.src.outputs.sha }}" \
+            --target "$SHA" \
             --title "$TAG" \
             --notes "Bundles jean [$JEAN](https://github.com/coollabsio/jean/releases/tag/$JEAN)." \
             --latest

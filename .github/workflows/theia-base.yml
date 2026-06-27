@@ -1,0 +1,125 @@
+name: Theia base image
+
+# Builds the prebuilt Theia base image (Dockerfile.theia) that the main image
+# COPYs /opt/theia from. Compiling Theia (webpack) on every jean release was the
+# release bottleneck - under QEMU the arm64 build blew past the 30m timeout. Here
+# each arch builds on a NATIVE runner (no emulation), so the slow build happens
+# once, off the release hot path.
+#
+# Distributed multi-platform build: one job per arch pushes an image by DIGEST
+# (no tag), then a merge job stitches them into a multi-arch manifest tagged
+# `theia-base` in the SAME Docker Hub repo as the released image (no separate
+# repo). Pattern from docker/build-push-action multi-platform docs.
+#
+# Runs automatically when the Theia inputs change (theia/**, Dockerfile.theia),
+# and on demand. After it finishes, the next jean Release picks up the new base.
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "theia/**"
+      - "Dockerfile.theia"
+      - ".github/workflows/theia-base.yml"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: spotwhale/jean-dockerized
+  TAG: theia-base
+
+# One base build at a time; a newer push supersedes an in-flight one.
+concurrency:
+  group: theia-base
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          # Native arm64 hosted runner: no QEMU, so the webpack build runs at
+          # native speed instead of timing out under emulation.
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker - Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Build this arch and push it by digest only (no tag). The merge job below
+      # assembles the multi-arch manifest from the per-arch digests. Cache is
+      # scoped per arch so the two jobs don't clobber each other's GHA cache.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.theia
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=theia-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=theia-${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: theia-digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge manifest
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: theia-digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker - Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Stitch the per-arch digests into one multi-arch manifest tagged `theia-base`.
+      - name: Create and push manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create -t "${IMAGE}:${TAG}" \
+            $(printf "${IMAGE}@sha256:%s " *)
+          docker buildx imagetools inspect "${IMAGE}:${TAG}"

@@ -12,35 +12,23 @@
 # =========================================================================
 
 # =========================================================================
-# Theia IDE build stage. Builds the browser-flavored Eclipse Theia editor that
-# ships alongside jean (see theia/package.json). Kept in its own stage so the
-# build toolchain (yarn, node-gyp, build-essential) never lands in the final
-# image - only the built app + its production node_modules are copied across.
+# Theia IDE comes from a PREBUILT base image, not an inline build stage.
+# Compiling Theia (webpack) on every jean release was the bottleneck - under
+# QEMU emulation the arm64 build blew past the 30m Release timeout. It now lives
+# in Dockerfile.theia, built once per arch on native runners and published as a
+# multi-arch image (see .github/workflows/theia-base.yml). The built app is
+# pulled in via `COPY --from=theia` near the end of this file.
 #
-# node:22-bookworm matches the final image (debian bookworm + Node 22), so the
-# native modules built here (node-pty for the integrated terminal) are
-# ABI-compatible with the Node that runs Theia at runtime. buildx runs this per
-# target arch, so amd64/arm64 each get natively-compiled binaries.
-# =========================================================================
-FROM node:22-bookworm AS theia-builder
-WORKDIR /opt/theia
-# webpack.config.js forces the webpack bundler: recent @theia/cli defaults to
-# esbuild, which can't resolve the `~octicons` tilde import in @theia/git's CSS.
-COPY theia/package.json theia/webpack.config.js ./
-# node:22-bookworm (non-slim) already ships build-essential + python3 for
-# node-gyp. The -dev headers below let node-pty / keytar compile.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      libsecret-1-dev libxkbfile-dev \
- && rm -rf /var/lib/apt/lists/* \
- && yarn install --network-timeout 600000 \
- && NODE_OPTIONS="--max_old_space_size=4096" yarn theia build \
- && yarn theia download:plugins \
- && yarn install --production --network-timeout 600000 \
- && yarn autoclean --init \
- && sed -i '/^test$/d;/^tests$/d' .yarnclean \
- && printf '%s\n' '*.ts' '*.ts.map' '*.spec.*' >> .yarnclean \
- && yarn autoclean --force \
- && yarn cache clean
+# THEIA_BASE is the image ref to copy /opt/theia from. It lives in the SAME
+# Docker Hub repo as the released image, under a dedicated `theia-base` tag (not
+# a separate repo). release.yml pins it to a digest (supply-chain: this image
+# carries live Claude/Codex creds + git push, so no mutable tag in CI). Local
+# builds default to the tag; rebuild it locally after touching theia/ with:
+#   docker build -f Dockerfile.theia -t spotwhale/jean-dockerized:theia-base .
+# `--from` can't expand a variable directly, so alias the base image as a stage
+# (FROM with a global ARG is allowed) and COPY from that stage name instead.
+ARG THEIA_BASE=spotwhale/jean-dockerized:theia-base
+FROM ${THEIA_BASE} AS theia
 
 # Base pinned by digest for reproducible/supply-chain-safe builds. This is the
 # multi-arch index digest, so buildx still selects the right per-arch image.
@@ -146,12 +134,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-bin \
  && apt-get purge -y librsvg2-bin \
  && rm -rf /var/lib/apt/lists/* /tmp/web
 
-# Bundled Theia IDE, built in the theia-builder stage. entrypoint.sh runs the
-# dispatcher (theia-dispatcher.mjs) which lazily spawns one Theia per git worktree on
-# 127.0.0.1 and routes <slug>.<preview-wildcard> -> that worktree - reached only through
-# the preview proxy, never its own host port. THEIA_DEFAULT_PLUGINS points at the
-# (currently empty) bundled plugin dir; extensions install at runtime from Open VSX.
-COPY --from=theia-builder /opt/theia /opt/theia
+# Bundled Theia IDE, pulled from the prebuilt multi-arch base (Dockerfile.theia,
+# published by theia-base.yml). buildx resolves ${THEIA_BASE} to the matching arch.
+# Re-declare the ARG here to bring the global default into this stage's scope.
+# entrypoint.sh runs the dispatcher (theia-dispatcher.mjs) which lazily spawns one
+# Theia per git worktree on 127.0.0.1 and routes <slug>.<preview-wildcard> -> that
+# worktree - reached only through the preview proxy, never its own host port.
+# THEIA_DEFAULT_PLUGINS points at the (currently empty) bundled plugin dir;
+# extensions install at runtime from Open VSX.
+COPY --from=theia /opt/theia /opt/theia
 # The per-worktree dispatcher (zero-dep node) lives next to the Theia build.
 COPY web/theia-dispatcher.mjs /opt/theia/theia-dispatcher.mjs
 # THEIA_WEBVIEW_EXTERNAL_ENDPOINT={{hostname}} serves webviews (markdown preview,
