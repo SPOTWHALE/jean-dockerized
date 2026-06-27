@@ -11,6 +11,37 @@
 # JEAN_REF must be a published release tag (e.g. v0.1.57), not a branch.
 # =========================================================================
 
+# =========================================================================
+# Theia IDE build stage. Builds the browser-flavored Eclipse Theia editor that
+# ships alongside jean (see theia/package.json). Kept in its own stage so the
+# build toolchain (yarn, node-gyp, build-essential) never lands in the final
+# image - only the built app + its production node_modules are copied across.
+#
+# node:22-bookworm matches the final image (debian bookworm + Node 22), so the
+# native modules built here (node-pty for the integrated terminal) are
+# ABI-compatible with the Node that runs Theia at runtime. buildx runs this per
+# target arch, so amd64/arm64 each get natively-compiled binaries.
+# =========================================================================
+FROM node:22-bookworm AS theia-builder
+WORKDIR /opt/theia
+# webpack.config.js forces the webpack bundler: recent @theia/cli defaults to
+# esbuild, which can't resolve the `~octicons` tilde import in @theia/git's CSS.
+COPY theia/package.json theia/webpack.config.js ./
+# node:22-bookworm (non-slim) already ships build-essential + python3 for
+# node-gyp. The -dev headers below let node-pty / keytar compile.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libsecret-1-dev libxkbfile-dev \
+ && rm -rf /var/lib/apt/lists/* \
+ && yarn install --network-timeout 600000 \
+ && NODE_OPTIONS="--max_old_space_size=4096" yarn theia build \
+ && yarn theia download:plugins \
+ && yarn install --production --network-timeout 600000 \
+ && yarn autoclean --init \
+ && sed -i '/^test$/d;/^tests$/d' .yarnclean \
+ && printf '%s\n' '*.ts' '*.ts.map' '*.spec.*' >> .yarnclean \
+ && yarn autoclean --force \
+ && yarn cache clean
+
 # Base pinned by digest for reproducible/supply-chain-safe builds. This is the
 # multi-arch index digest, so buildx still selects the right per-arch image.
 # Bump with: docker buildx imagetools inspect debian:bookworm-slim
@@ -105,13 +136,31 @@ ARG IMAGE_VERSION=
 # Install rsvg-convert (build-time only), render icons, inject PWA tags, then
 # purge the package in the same layer so it doesn't land in the final image.
 RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-bin \
- && cp /tmp/web/manifest.webmanifest /tmp/web/sw.js /tmp/web/token.html /tmp/web/version-badge.js /usr/local/bin/dist/ \
+ && cp /tmp/web/manifest.webmanifest /tmp/web/sw.js /tmp/web/token.html \
+      /tmp/web/version-badge.js /tmp/web/theia-launch.js /usr/local/bin/dist/ \
+ && printf "window.__THEIA_HOST_SUFFIX__=''\n" > /usr/local/bin/dist/theia-config.js \
  && rsvg-convert -w 192 -h 192 /tmp/web/icon.svg -o /usr/local/bin/dist/icon-192.png \
  && rsvg-convert -w 512 -h 512 /tmp/web/icon.svg -o /usr/local/bin/dist/icon-512.png \
  && rsvg-convert -w 180 -h 180 /tmp/web/icon.svg -o /usr/local/bin/dist/apple-touch-icon.png \
  && IMAGE_VERSION="$IMAGE_VERSION" node /tmp/web/inject-pwa.mjs /usr/local/bin/dist/index.html \
  && apt-get purge -y librsvg2-bin \
  && rm -rf /var/lib/apt/lists/* /tmp/web
+
+# Bundled Theia IDE, built in the theia-builder stage. entrypoint.sh runs the
+# dispatcher (theia-dispatcher.mjs) which lazily spawns one Theia per git worktree on
+# 127.0.0.1 and routes <slug>.<preview-wildcard> -> that worktree - reached only through
+# the preview proxy, never its own host port. THEIA_DEFAULT_PLUGINS points at the
+# (currently empty) bundled plugin dir; extensions install at runtime from Open VSX.
+COPY --from=theia-builder /opt/theia /opt/theia
+# The per-worktree dispatcher (zero-dep node) lives next to the Theia build.
+COPY web/theia-dispatcher.mjs /opt/theia/theia-dispatcher.mjs
+# THEIA_WEBVIEW_EXTERNAL_ENDPOINT={{hostname}} serves webviews (markdown preview,
+# many extensions) from the same origin. The default `{{uuid}}.webview.{{hostname}}`
+# needs a per-webview wildcard subdomain, which the numeric-only preview proxy
+# can't route - so without this, webviews 404 behind the proxy.
+ENV THEIA_PORT=8443 \
+    THEIA_DEFAULT_PLUGINS=local-dir:/opt/theia/plugins \
+    THEIA_WEBVIEW_EXTERNAL_ENDPOINT={{hostname}}
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

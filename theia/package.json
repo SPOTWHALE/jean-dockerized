@@ -1,0 +1,70 @@
+{
+  "private": true,
+  "//": "Browser-flavored Eclipse Theia app bundled into jean-dockerized. Built in a",
+  "//build": "Dockerfile stage (yarn theia build) and run headless next to jean. Reached",
+  "//reach": "through the existing preview proxy at https://<THEIA_PORT>.<preview-wildcard>",
+  "//auth": "- never exposed on its own host port. Theia ships no auth; the preview",
+  "//gate": "basic-auth (fails closed without PREVIEW_PASSWORD) is the lock.",
+  "theia": {
+    "frontend": {
+      "config": {
+        "applicationName": "Jean IDE",
+        "preferences": {
+          "files.enableTrash": false,
+          "security.workspace.trust.enabled": false
+        }
+      }
+    }
+  },
+  "//versions": "Every @theia/* is pinned to ONE exact version. With `latest`, packages",
+  "//versions2": "resolve to mismatched versions (e.g. abandoned @theia/git stuck at 1.60.2,",
+  "//versions3": "@theia/preview at 1.72.3), which nest their own older @theia/core. Multiple",
+  "//versions4": "@theia/core copies => multiple FrontendApplicationConfigProvider singletons",
+  "//versions5": "=> the frontend crashes 'The configuration is not set'. Dropped @theia/git",
+  "//versions6": "and @theia/preview: neither publishes 1.73.0 (git is discontinued). Git is",
+  "//versions7": "available at runtime via the bundled vscode git extension from Open VSX.",
+  "//test": "@theia/test arrives transitively and the generator auto-wires it into src-gen; listed explicitly so `yarn install --production` keeps it and the runtime require doesn't dangle.",
+  "//react": "react/react-dom are PEER deps of @theia/core (^18.3.1 || ^19), so the app must provide them. With `latest` they used to arrive transitively via mismatched packages; once everything is pinned they must be explicit or webpack fails: Can't resolve 'react'.",
+  "dependencies": {
+    "@theia/callhierarchy": "1.73.0",
+    "@theia/debug": "1.73.0",
+    "@theia/editor-preview": "1.73.0",
+    "@theia/file-search": "1.73.0",
+    "@theia/getting-started": "1.73.0",
+    "@theia/keymaps": "1.73.0",
+    "@theia/markers": "1.73.0",
+    "@theia/messages": "1.73.0",
+    "@theia/monaco": "1.73.0",
+    "@theia/navigator": "1.73.0",
+    "@theia/outline-view": "1.73.0",
+    "@theia/plugin-ext": "1.73.0",
+    "@theia/plugin-ext-vscode": "1.73.0",
+    "@theia/preferences": "1.73.0",
+    "@theia/process": "1.73.0",
+    "@theia/scm": "1.73.0",
+    "@theia/search-in-workspace": "1.73.0",
+    "@theia/terminal": "1.73.0",
+    "@theia/test": "1.73.0",
+    "@theia/typehierarchy": "1.73.0",
+    "@theia/userstorage": "1.73.0",
+    "@theia/vsx-registry": "1.73.0",
+    "@theia/workspace": "1.73.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "resolutions": {
+    "@theia/core": "1.73.0"
+  },
+  "//webpack": "webpack.config.js forces Theia's stable default webpack pipeline (the",
+  "//webpack2": "config-less default is the newer esbuild pipeline). terser-webpack-plugin",
+  "//webpack3": "is the webpack-only minifier, no longer pulled transitively by @theia/cli.",
+  "devDependencies": {
+    "@theia/cli": "1.73.0",
+    "terser-webpack-plugin": "latest"
+  },
+  "theiaPluginsDir": "plugins",
+  "theiaPlugins": {},
+  "//plugins": "Left empty on purpose: language support / extensions are installed at",
+  "//runtime": "runtime from Open VSX via the built-in @theia/vsx-registry view, so the",
+  "//why": "image is not pinned to a frozen, soon-stale builtin VSIX set."
+}

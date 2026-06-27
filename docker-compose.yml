@@ -34,8 +34,16 @@ services:
       PREVIEW_PORT: 8088
       # Preview subdomains are DISABLED (403) until you set PREVIEW_PASSWORD. Set it
       # to gate every preview port behind one basic-auth login (PREVIEW_USER: dev).
+      # The bundled Theia IDE is reached through this same gate, so PREVIEW_PASSWORD
+      # is required to open it too.
       # PREVIEW_USER: dev
       # PREVIEW_PASSWORD: change-me
+      # Bundled Theia IDE (per-worktree, COSMETIC scoping - not a security boundary).
+      # A dispatcher runs one Theia per git worktree, reached through the preview proxy:
+      # ide.<wildcard> = picker, <repo>-<branch>.<wildcard> = that worktree's editor.
+      # THEIA_HOST_SUFFIX is the preview-wildcard host the "</> IDE" button targets
+      # (everything after the leading label). Required for correct button links.
+      # THEIA_HOST_SUFFIX: .apps.you.dev
       # Public URL of this instance. When set, the startup banner prints a ready
       # login link (and a scannable QR) so onboarding is one tap on a phone.
       # JEAN_PUBLIC_URL: https://jean.example.com

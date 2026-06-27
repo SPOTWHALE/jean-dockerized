@@ -98,6 +98,21 @@ subdomain. Dev servers must bind `0.0.0.0`. Each preview port's `route` `import`
 So previews are disabled until `PREVIEW_PASSWORD` is set, then gated behind one login. Don't
 revert this to an empty/open default - it would expose every loopback port to the internet.
 
+**Built-in IDE (Theia).** A browser-flavored Eclipse Theia app (`theia/package.json`) is built in
+a dedicated Dockerfile stage (`FROM node:22-bookworm AS theia-builder`, matched to the final
+image's Debian/Node so `node-pty` is ABI-compatible) and copied to `/opt/theia`. `entrypoint.sh`
+runs it headless on `127.0.0.1:${THEIA_PORT}` (default 8443) with a crash watchdog, so it is
+reachable **only through the preview proxy** at `https://<THEIA_PORT>.<wildcard>` - no extra host
+port. Theia ships **no auth**, so the preview basic-auth gate is the lock (unset `PREVIEW_PASSWORD`
+→ 403, same as previews). `THEIA_WEBVIEW_EXTERNAL_ENDPOINT={{hostname}}` keeps webviews same-origin
+because the numeric-only proxy can't route Theia's default `*.webview.<host>` subdomain. The UI
+entry point is `web/theia-launch.js` (a floating `</> IDE` button injected by `inject-pwa.mjs`,
+same pattern as `version-badge.js`); it opens `window.__THEIA_URL__` from `theia-config.js`, which
+`entrypoint.sh` writes from `THEIA_PUBLIC_URL` (falling back to `<port>.<current-host>`). Theia
+shares `/workspace`; its settings persist under `/workspace/.theia`. Extensions install at runtime
+from Open VSX (`@theia/vsx-registry`), so `theiaPlugins` is intentionally empty. The image-status
+badge tracks `theia/` too (`FILES` in `image-status.yml`).
+
 **Docker-in-Docker.** The image installs the full Docker engine (`docker-ce` + compose/buildx
 plugins, plus a `docker-compose` shim for the v1 name). `entrypoint.sh` starts `dockerd` in the
 background; it needs the container to run **privileged** (`docker-compose.yml` sets
@@ -105,7 +120,7 @@ background; it needs the container to run **privileged** (`docker-compose.yml` s
 run inside this container, so ports they publish are reachable through the preview proxy. If the
 container isn't privileged, dockerd fails to start and entrypoint logs it but jean still runs.
 
-`entrypoint.sh` flow: set `safe.directory '*'` → start Xvfb → start dockerd (bg) → start preview proxy (caddy, bg) →
+`entrypoint.sh` flow: set `safe.directory '*'` → start Xvfb → start dockerd (bg) → start preview proxy (caddy, bg) → start Theia IDE (bg) →
 resolve auth args (`JEAN_TOKEN` set → `--token …`; else jean auto-generates and persists a
 token in the workspace volume) → print the login banner (a ready link + `qrencode` QR when
 `JEAN_PUBLIC_URL` is set) → `exec jean --headless`. Auth is always on: the wrapper

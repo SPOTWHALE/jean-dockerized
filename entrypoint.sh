@@ -98,6 +98,51 @@ if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
   fi
 fi
 
+# Theia IDE: per-worktree scoped editors via the dispatcher (web/theia-dispatcher.mjs).
+# One Theia can only have one workspace root, so to scope the sidebar per repo/branch we
+# run a Theia per git worktree, lazily. The dispatcher (127.0.0.1:${THEIA_DISPATCH_PORT})
+# routes by hostname: <slug>.<preview-wildcard> -> that worktree's Theia, ide.<wildcard>
+# -> a picker. It is reachable ONLY through the preview proxy (Caddy forwards every
+# non-numeric leading label here, behind the same basic-auth gate). COSMETIC scoping
+# only - NOT a security boundary (a Theia's terminal still reaches all of /workspace).
+# HOME=/workspace, so Theia settings persist on the volume. Skipped if app/node absent.
+THEIA_DISPATCH_PORT="${THEIA_DISPATCH_PORT:-8444}"
+if [ -f /opt/theia/src-gen/backend/main.js ] && [ -f /opt/theia/theia-dispatcher.mjs ] && command -v node >/dev/null 2>&1; then
+  # Tell the injected launcher (web/theia-launch.js) the preview-wildcard host suffix it
+  # uses to build <slug>.<suffix> (e.g. .apps.you.dev, or .localhost:8088 locally). The
+  # dispatcher is reachable there through the proxy. Empty -> the button falls back to
+  # ".<current-host>". JSON-encoded via node to avoid shell-quoting pitfalls.
+  DIST=/usr/local/bin/dist
+  if [ -d "$DIST" ]; then
+    printf "window.__THEIA_HOST_SUFFIX__=%s\n" \
+      "$(node -e 'process.stdout.write(JSON.stringify(process.env.THEIA_HOST_SUFFIX||""))')" \
+      > "$DIST/theia-config.js"
+  fi
+
+  echo "[entrypoint] starting Theia dispatcher on 127.0.0.1:${THEIA_DISPATCH_PORT}"
+  start_theia_dispatch() {
+    THEIA_DISPATCH_PORT="${THEIA_DISPATCH_PORT}" \
+    THEIA_MAIN=/opt/theia/src-gen/backend/main.js \
+    THEIA_WORKSPACE=/workspace \
+      node /opt/theia/theia-dispatcher.mjs >/tmp/theia-dispatcher.log 2>&1 &
+    THEIA_DISPATCH_PID=$!
+  }
+  start_theia_dispatch
+  sleep 1
+  if ! kill -0 "$THEIA_DISPATCH_PID" 2>/dev/null; then
+    echo "[entrypoint] WARNING: Theia dispatcher exited immediately, IDE unavailable" >&2
+    cat /tmp/theia-dispatcher.log >&2
+  else
+    echo "[entrypoint] Theia dispatcher ready"
+    # Watchdog: restart the dispatcher if it crashes (parity with caddy/dockerd).
+    ( while sleep 15; do
+        kill -0 "$THEIA_DISPATCH_PID" 2>/dev/null && continue
+        echo "[entrypoint] Theia dispatcher died, restarting" >&2
+        start_theia_dispatch
+      done ) &
+  fi
+fi
+
 # Auth: jean generates+persists a token by default (in the workspace volume).
 # Override with a stable token via JEAN_TOKEN. Auth is always on by design --
 # this wrapper deliberately does not expose jean's --no-token flag.

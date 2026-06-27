@@ -1,0 +1,13 @@
+# This repo builds a Linux container: every script/config is consumed with LF.
+# Without this, a Windows checkout (core.autocrlf=true) writes CRLF, and Docker
+# COPYs those bytes verbatim - entrypoint.sh then fails with
+#   /usr/bin/env: 'bash\r': No such file or directory
+# Force LF for all text so local Windows builds match the Linux CI build.
+* text=auto eol=lf
+
+# Binary assets: never touch.
+*.png binary
+*.ico binary
+*.deb binary
+*.sig binary
+*.pub binary

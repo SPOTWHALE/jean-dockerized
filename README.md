@@ -12,6 +12,7 @@ Run [Jean](https://github.com/coollabsio/jean) in your browser, on your server. 
 ## Features
 
 - **Browser UI** - Jean's full interface served over HTTPS, token-protected
+- **Built-in IDE** - a bundled [Eclipse Theia](https://theia-ide.org/) editor (files, terminal, git, extensions) one tap away, no extra port
 - **Preview URLs** - dev servers the agent starts are instantly reachable at `<port>.apps.your-domain` (same pattern as Codespaces/Gitpod)
 - **Docker-in-Docker** - agents can run `docker` and `docker compose`; requires `privileged: true`
 - **amd64 + arm64** - one image runs on x86 servers and ARM (Apple Silicon, Ampere/Graviton, Raspberry Pi)
@@ -60,6 +61,27 @@ Setup (Coolify):
 
 > Preview subdomains are **disabled (403) until you set `PREVIEW_PASSWORD`**, which gates every preview port behind one basic-auth login (`PREVIEW_USER` defaults to `dev`). This fails closed so a misconfigured deploy never exposes loopback ports to the internet.
 
+## Built-in IDE
+
+A full [Eclipse Theia](https://theia-ide.org/) editor (file tree, integrated
+terminal, git, search, and Open VSX extensions) ships inside the image. A floating
+**`</> IDE`** button in Jean's web UI opens it in a new tab.
+
+Theia runs headless on `127.0.0.1:8443` and is reached through the **same preview
+proxy** as dev servers - at `https://8443.<your-wildcard-domain>`. It is never bound
+to its own host port.
+
+Setup:
+1. It is gated by the preview proxy, so it is **only reachable once `PREVIEW_PASSWORD`
+   is set** (same basic-auth login as previews; fails closed otherwise).
+2. The button targets `https://8443.<jean-host>` by default. If your preview wildcard
+   differs from the Jean host (e.g. `*.apps.you.dev`), set `THEIA_PUBLIC_URL` so the
+   button points at the right place.
+
+> Theia shares `/workspace` with Jean and the agents, so edits, the file tree, and
+> the terminal all act on the same repos. Its own settings persist under
+> `/workspace/.theia`.
+
 ## Security
 
 <details>
@@ -102,4 +124,6 @@ Sysbox is a **host-installed runtime**, not part of the image: it can't be bundl
 | `JEAN_PORT` | `3456` | Jean web UI port |
 | `PREVIEW_PORT` | `8088` | Preview reverse-proxy port |
 | `PREVIEW_USER` | `dev` | Username for preview basic auth |
-| `PREVIEW_PASSWORD` | unset | Required to enable previews; gates all preview subdomains behind basic auth (unset = previews return 403) |
+| `PREVIEW_PASSWORD` | unset | Required to enable previews **and the IDE**; gates all preview subdomains behind basic auth (unset = 403) |
+| `THEIA_PORT` | `8443` | Internal port for the bundled Theia IDE; reached via the preview proxy, never exposed directly |
+| `THEIA_PUBLIC_URL` | unset | Where the in-app `</> IDE` button opens; defaults to `<THEIA_PORT>.<jean-host>` |

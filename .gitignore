@@ -1,5 +1,6 @@
 # Local env / secrets
 .env
+docker-compose.override.yml
 
 # Agent scratch + local Claude config
 .ai/

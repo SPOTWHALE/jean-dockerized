@@ -18,28 +18,44 @@
 	# Capture the leading numeric label, e.g. "8000" from "8000.apps.you.dev".
 	@withport header_regexp port Host ^([0-9]{2,5})\.
 
-	# Block SSRF: privileged ports (<1024), jean itself, and this proxy's own port.
-	# int() converts the regex capture (substituted per-request) to a number.
-	@blocked {
-		header_regexp blockedport Host ^([0-9]{2,5})\.
-		expression `int({re.blockedport.1}) < 1024 || int({re.blockedport.1}) == {$JEAN_PORT:3456} || int({re.blockedport.1}) == {$PREVIEW_PORT:8088}`
-	}
-
-	handle @blocked {
-		header Content-Type "text/html; charset=utf-8"
-		respond `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Forbidden</title><body style="margin:0;min-height:100dvh;display:grid;place-items:center;background:#0b0b0c;color:#e7e7ea;font:16px/1.5 system-ui,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:20px;margin:0 0 8px">Reserved port 🚫</h1><p style="margin:0;color:#9b9ba3">Ports below 1024 and Jean's own ports can't be previewed. Use a dev-server port in the 1024-65535 range.</p></div>` 403
-	}
-
 	handle @withport {
+		# Block SSRF: privileged ports (<1024), jean itself, and this proxy's own
+		# port. We evaluate this HERE - after @withport matched - so it reuses that
+		# matcher's capture {re.port.1} (the same placeholder reverse_proxy uses).
+		# A separate named matcher with its own header_regexp + expression races:
+		# the CEL expression evaluates before the regex populates its capture, so
+		# {re.<name>.1} is null and int(null) makes every preview 500.
+		@blocked expression `int({re.port.1}) < 1024 || int({re.port.1}) == {$JEAN_PORT:3456} || int({re.port.1}) == {$PREVIEW_PORT:8088}`
+		handle @blocked {
+			header Content-Type "text/html; charset=utf-8"
+			respond `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Forbidden</title><body style="margin:0;min-height:100dvh;display:grid;place-items:center;background:#0b0b0c;color:#e7e7ea;font:16px/1.5 system-ui,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:20px;margin:0 0 8px">Reserved port 🚫</h1><p style="margin:0;color:#9b9ba3">Ports below 1024 and Jean's own ports can't be previewed. Use a dev-server port in the 1024-65535 range.</p></div>` 403
+		}
+
 		# `route` keeps directives in written order, so the imported gate runs
 		# before reverse_proxy. entrypoint.sh writes auth.import as either a
 		# `basic_auth { user <bcrypt> }` block (when PREVIEW_PASSWORD is set) or a
 		# `respond 403` (when it is unset) - so previews fail CLOSED by default and
 		# a misconfigured deploy can't expose every loopback port to the internet.
+		handle {
+			route {
+				import /etc/caddy/auth.import
+				# websockets (vite HMR etc.) are upgraded automatically by reverse_proxy.
+				reverse_proxy 127.0.0.1:{re.port.1}
+			}
+		}
+	}
+
+	# A non-numeric leading label (a name, not a port) -> the per-worktree Theia
+	# dispatcher (web/theia-dispatcher.mjs on THEIA_DISPATCH_PORT). e.g. ide.<host>
+	# = worktree picker, <repo>-<branch>.<host> = that worktree's scoped Theia. The
+	# label must START with a letter so it can't collide with a numeric preview port
+	# (handled above). Same basic-auth gate as previews (fails closed). reverse_proxy
+	# upgrades the Theia frontend<->backend WebSocket automatically.
+	@named header_regexp name Host ^[A-Za-z][A-Za-z0-9-]*\.
+	handle @named {
 		route {
 			import /etc/caddy/auth.import
-			# websockets (vite HMR etc.) are upgraded automatically by reverse_proxy.
-			reverse_proxy 127.0.0.1:{re.port.1}
+			reverse_proxy 127.0.0.1:{$THEIA_DISPATCH_PORT:8444}
 		}
 	}
 
