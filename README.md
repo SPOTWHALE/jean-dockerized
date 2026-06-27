@@ -38,6 +38,25 @@ Run [Jean](https://github.com/coollabsio/jean) in your browser, on your server. 
 3. Add two A records in your DNS pointing to your server's IP (e.g. `jean` and `*.jean`)
 4. Deploy, open your domain, and enter the token from the logs - or set a fixed one with `JEAN_TOKEN`
 
+<details>
+<summary><strong>Previews/IDE return <code>503 no available server</code>?</strong></summary>
+
+Coolify's auto-generated Traefik labels drop the load-balancer port on the **HTTPS
+wildcard** service when one container serves two ports (3456 + 8088) plus a wildcard
+domain, so the app on `jean.example.com` works but every `*.jean.example.com` 503s.
+
+Fix: **clear the Domains field** in Coolify (so it stops generating the broken labels)
+and route by hand with the commented `labels:` block in
+[`docker-compose.yml`](./docker-compose.yml) - stable, redeploy-proof names. These are
+Traefik-only; other proxies ignore them.
+
+If a proxied host is served by **Cloudflare** (orange cloud), note Universal SSL covers
+only `example.com` + `*.example.com` (one level) - a 3-level host like
+`*.jean.example.com` needs Total TLS / Advanced Certificate Manager, or grey-cloud the
+record so Traefik terminates TLS itself.
+
+</details>
+
 ## Run locally
 
 ```bash

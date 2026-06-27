@@ -28,6 +28,40 @@ services:
       # Preview proxy: <port>.<your-wildcard-domain> -> container's dev servers.
       # Point a wildcard Coolify domain (*.apps.you.dev) at this port.
       - "127.0.0.1:8088:8088"
+    # Reverse-proxy routing. ONLY needed for Traefik (incl. Coolify, which runs
+    # Traefik underneath); other proxies (nginx, Caddy, Cloudflare Tunnel, NPM)
+    # ignore these - configure those their own way. Commented out by default.
+    #
+    # Coolify's auto-domains drop the loadbalancer port on the HTTPS wildcard
+    # service when one container serves two ports + a wildcard, so previews/IDE
+    # 503. Workaround: CLEAR the Coolify "Domains" field and define routing by
+    # hand below (stable, redeploy-proof names - no container-hash). Replace
+    # jean.example.com with your host.
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.middlewares.jean-https.redirectscheme.scheme=https
+    #   # main app (Jean UI) on 3456
+    #   - 'traefik.http.routers.jean-app.rule=Host(`jean.example.com`)'
+    #   - traefik.http.routers.jean-app.entrypoints=https
+    #   - traefik.http.routers.jean-app.tls=true
+    #   - traefik.http.routers.jean-app.tls.certresolver=letsencrypt
+    #   - traefik.http.routers.jean-app.service=jean-app
+    #   - traefik.http.services.jean-app.loadbalancer.server.port=3456
+    #   - 'traefik.http.routers.jean-app-http.rule=Host(`jean.example.com`)'
+    #   - traefik.http.routers.jean-app-http.entrypoints=http
+    #   - traefik.http.routers.jean-app-http.middlewares=jean-https
+    #   # preview + IDE wildcard on 8088 (matches <label>.jean.example.com, not the bare host)
+    #   - 'traefik.http.routers.jean-prev.rule=HostRegexp(`^.+\.jean\.example\.com$`)'
+    #   - traefik.http.routers.jean-prev.entrypoints=https
+    #   - traefik.http.routers.jean-prev.tls=true
+    #   - traefik.http.routers.jean-prev.tls.certresolver=letsencrypt
+    #   - 'traefik.http.routers.jean-prev.tls.domains[0].main=jean.example.com'
+    #   - 'traefik.http.routers.jean-prev.tls.domains[0].sans=*.jean.example.com'
+    #   - traefik.http.routers.jean-prev.service=jean-prev
+    #   - traefik.http.services.jean-prev.loadbalancer.server.port=8088
+    #   - 'traefik.http.routers.jean-prev-http.rule=HostRegexp(`^.+\.jean\.example\.com$`)'
+    #   - traefik.http.routers.jean-prev-http.entrypoints=http
+    #   - traefik.http.routers.jean-prev-http.middlewares=jean-https
     environment:
       JEAN_HOST: 0.0.0.0
       JEAN_PORT: 3456
