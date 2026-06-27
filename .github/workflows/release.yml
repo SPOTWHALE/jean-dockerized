@@ -55,7 +55,10 @@ jobs:
       jean_ref: ${{ steps.jean.outputs.ref }}
       tag: ${{ steps.ver.outputs.tag }}
       sha: ${{ steps.src.outputs.sha }}
-      theia_base: ${{ steps.theia.outputs.base }}
+      # Only the digest (no repo name) crosses the job boundary: the repo name
+      # contains DOCKER_USERNAME, and GitHub redacts secret-bearing outputs to
+      # empty downstream. The build job rebuilds the full ref from $IMAGE.
+      theia_digest: ${{ steps.theia.outputs.digest }}
     steps:
       # Build the requested repo state. Blank repo_ref -> the branch this dispatch
       # ran on (master HEAD), i.e. your latest pushed changes. The watcher passes a
@@ -136,8 +139,10 @@ jobs:
 
       # Pin the Theia base to its current digest so every arch in the matrix
       # copies the exact same prebuilt /opt/theia, and the release is reproducible
-      # (no mutable :latest baked into an image that carries live creds). If the
-      # base was never built, fail loud with the fix.
+      # (no mutable tag baked into an image that carries live creds). If the base
+      # was never built, fail loud with the fix. Output ONLY the digest - the full
+      # ref includes the repo name (= DOCKER_USERNAME secret), which GitHub would
+      # redact to empty when passed to the build job.
       - name: Pin Theia base digest
         id: theia
         run: |
@@ -146,9 +151,8 @@ jobs:
             echo "::error::${IMAGE}:${THEIA_TAG} not found. Run the 'Theia base image' workflow first."
             exit 1
           fi
-          base="${IMAGE}@${digest}"
-          echo "Theia base: $base"
-          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "Theia base digest: $digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
   # Build each arch on its own NATIVE runner (no QEMU) and push by digest. The
   # release job below assembles the multi-arch manifest from these digests.
@@ -193,7 +197,7 @@ jobs:
           build-args: |
             JEAN_REF=${{ needs.prepare.outputs.jean_ref }}
             IMAGE_VERSION=${{ needs.prepare.outputs.tag }}
-            THEIA_BASE=${{ needs.prepare.outputs.theia_base }}
+            THEIA_BASE=${{ env.IMAGE }}@${{ needs.prepare.outputs.theia_digest }}
           cache-from: type=gha,scope=release-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=release-${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
