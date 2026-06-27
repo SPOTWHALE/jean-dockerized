@@ -63,24 +63,36 @@ Setup (Coolify):
 
 ## Built-in IDE
 
+<details>
+<summary><strong>Per-worktree Theia editor</strong></summary>
+
 A full [Eclipse Theia](https://theia-ide.org/) editor (file tree, integrated
 terminal, git, search, and Open VSX extensions) ships inside the image. A floating
 **`</> IDE`** button in Jean's web UI opens it in a new tab.
 
-Theia runs headless on `127.0.0.1:8443` and is reached through the **same preview
-proxy** as dev servers - at `https://8443.<your-wildcard-domain>`. It is never bound
-to its own host port.
+The IDE is **scoped per git worktree**: a dispatcher lazily runs one Theia per
+repo/branch worktree (rooted at that directory, idle-reaped) and routes by hostname
+through the **same preview proxy** as dev servers - never on its own host port:
+
+- `https://ide.<your-wildcard-domain>` - a picker listing every repo › branch worktree under `/workspace`
+- `https://<repo>-<branch>.<your-wildcard-domain>` - that worktree's scoped editor
+
+The `</> IDE` button reads Jean's active repo/branch and opens that worktree directly,
+falling back to the picker when nothing is open.
 
 Setup:
 1. It is gated by the preview proxy, so it is **only reachable once `PREVIEW_PASSWORD`
    is set** (same basic-auth login as previews; fails closed otherwise).
-2. The button targets `https://8443.<jean-host>` by default. If your preview wildcard
-   differs from the Jean host (e.g. `*.apps.you.dev`), set `THEIA_PUBLIC_URL` so the
-   button points at the right place.
+2. Set `THEIA_HOST_SUFFIX` to your preview-wildcard host (everything after the leading
+   label, e.g. `.apps.you.dev`) so the button builds correct links. Empty falls back to
+   `.<current-host>`.
 
-> Theia shares `/workspace` with Jean and the agents, so edits, the file tree, and
-> the terminal all act on the same repos. Its own settings persist under
-> `/workspace/.theia`.
+> **Cosmetic scoping, not a security boundary.** Each Theia only roots the sidebar at
+> one worktree; its integrated terminal still runs as root and can reach all of
+> `/workspace`. Real isolation needs a container per repo. Theia shares `/workspace`
+> with Jean and the agents, and its settings persist on the volume (`HOME=/workspace`).
+
+</details>
 
 ## Security
 
@@ -125,5 +137,5 @@ Sysbox is a **host-installed runtime**, not part of the image: it can't be bundl
 | `PREVIEW_PORT` | `8088` | Preview reverse-proxy port |
 | `PREVIEW_USER` | `dev` | Username for preview basic auth |
 | `PREVIEW_PASSWORD` | unset | Required to enable previews **and the IDE**; gates all preview subdomains behind basic auth (unset = 403) |
-| `THEIA_PORT` | `8443` | Internal port for the bundled Theia IDE; reached via the preview proxy, never exposed directly |
-| `THEIA_PUBLIC_URL` | unset | Where the in-app `</> IDE` button opens; defaults to `<THEIA_PORT>.<jean-host>` |
+| `THEIA_HOST_SUFFIX` | unset | Preview-wildcard host the `</> IDE` button targets (e.g. `.apps.you.dev`); empty falls back to `.<current-host>` |
+| `THEIA_DISPATCH_PORT` | `8444` | Internal loopback port for the per-worktree Theia dispatcher; reached via the preview proxy, never exposed directly |
