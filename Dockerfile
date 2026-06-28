@@ -125,8 +125,9 @@ ARG IMAGE_VERSION=
 # purge the package in the same layer so it doesn't land in the final image.
 RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-bin \
  && cp /tmp/web/manifest.webmanifest /tmp/web/sw.js /tmp/web/token.html \
-      /tmp/web/version-badge.js /tmp/web/theia-launch.js /usr/local/bin/dist/ \
+      /tmp/web/version-badge.js /tmp/web/theia-launch.js /tmp/web/push-init.js /usr/local/bin/dist/ \
  && printf "window.__THEIA_HOST_SUFFIX__=''\n" > /usr/local/bin/dist/theia-config.js \
+ && printf "window.__PUSH_ENABLED__=false\n" > /usr/local/bin/dist/push-config.js \
  && rsvg-convert -w 192 -h 192 /tmp/web/icon.svg -o /usr/local/bin/dist/icon-192.png \
  && rsvg-convert -w 512 -h 512 /tmp/web/icon.svg -o /usr/local/bin/dist/icon-512.png \
  && rsvg-convert -w 180 -h 180 /tmp/web/icon.svg -o /usr/local/bin/dist/apple-touch-icon.png \
@@ -145,6 +146,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-bin \
 COPY --from=theia /opt/theia /opt/theia
 # The per-worktree dispatcher (zero-dep node) lives next to the Theia build.
 COPY web/theia-dispatcher.mjs /opt/theia/theia-dispatcher.mjs
+
+# Web Push relay (web/push-relay.mjs): observes jean's own WebSocket and sends a
+# phone notification when an agent finishes, errors, or needs approval. The
+# RFC 8291/8292 crypto is delegated to `web-push` (pinned), installed into a
+# dedicated dir the relay resolves `node_modules` from. entrypoint.sh runs it on
+# loopback; the browser reaches it through the preview proxy at jdpush.<wildcard>.
+COPY web/push-relay.mjs /opt/push/push-relay.mjs
+RUN cd /opt/push \
+ && npm init -y >/dev/null 2>&1 \
+ && npm i web-push@3.6.7 \
+ && npm cache clean --force
 # THEIA_WEBVIEW_EXTERNAL_ENDPOINT={{hostname}} serves webviews (markdown preview,
 # many extensions) from the same origin. The default `{{uuid}}.webview.{{hostname}}`
 # needs a per-webview wildcard subdomain, which the numeric-only preview proxy

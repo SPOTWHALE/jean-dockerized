@@ -46,6 +46,8 @@ const tags = `
     <script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}</script>
 ${versionTags}    <script src="/theia-config.js" defer></script>
     <script src="/theia-launch.js" defer></script>
+    <script src="/push-config.js" defer></script>
+    <script src="/push-init.js" defer></script>
 `
 
 if (!html.includes('</head>') || !html.includes('<head>')) {
@@ -58,6 +60,6 @@ html = html.replace('<head>', '<head>\n    ' + guard)
 html = html.replace('</head>', tags + '  </head>')
 writeFileSync(file, html)
 console.log(
-  '[pwa] injected token guard, manifest, icons, service worker, and Theia launcher' +
+  '[pwa] injected token guard, manifest, icons, service worker, Theia launcher, and push' +
     (imageVersion ? ` + version badge (${imageVersion})` : '')
 )

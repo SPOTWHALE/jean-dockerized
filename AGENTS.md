@@ -129,6 +129,27 @@ shares `/workspace`; its settings persist under `/workspace/.theia`. Extensions 
 from Open VSX (`@theia/vsx-registry`), so `theiaPlugins` is intentionally empty. The image-status
 badge tracks `theia/` too (`FILES` in `image-status.yml`).
 
+**Web Push notifications.** A relay (`web/push-relay.mjs`) closes the async "fire a task,
+pocket the phone" loop: it opens jean's **own** WebSocket as a client
+(`ws://127.0.0.1:${JEAN_PORT}/ws?token=…`, the same socket jean's UI uses - **jean is not
+forked**), reads its `{type:"event", event, payload:{session_id}}` stream, and on `chat:done`
+/ `chat:error` / `chat:codex_*_request` sends a Web Push to subscribed browsers. The
+RFC 8291/8292 crypto is delegated to `web-push@3.6.7`, installed into `/opt/push/node_modules`
+(the only npm dep added beyond the global CLIs); the WS client uses Node 22's global
+`WebSocket` (no `ws` dep). VAPID keys + subscriptions persist under `/workspace/.jean-push`.
+The relay's loopback HTTP (`GET /key`, `POST /subscribe|/unsubscribe`) is reached by the
+browser through the **preview proxy** at `jdpush.<wildcard>` - a reserved Caddy label matched
+**before** the generic `@named` theia route, and **not** behind the basic-auth gate: the relay
+does its own jean-token check on `/subscribe` (timing-safe), and `/key` only returns the public
+VAPID key. The browser side is `web/push-init.js` (a `🔔` toolbar button, injected by
+`inject-pwa.mjs` like `theia-launch.js`) plus `push` / `notificationclick` handlers added to
+`web/sw.js`. Fail-closed and opt-in: `entrypoint.sh` only starts the relay when **`JEAN_TOKEN`**
+(needed for the WS + subscriber auth) and **`THEIA_HOST_SUFFIX`** (the wildcard host the button
+targets) are both set, and writes `push-config.js` (`window.__PUSH_ENABLED__`) so the button
+stays hidden otherwise. Like the IDE, push therefore needs the preview wildcard domain. v1
+approval pushes are Codex-only (Claude's permission events aren't separately enumerated in the
+jean bundle); Claude is still covered by `chat:done` / `chat:error`.
+
 **Docker-in-Docker.** The image installs the full Docker engine (`docker-ce` + compose/buildx
 plugins, plus a `docker-compose` shim for the v1 name). `entrypoint.sh` starts `dockerd` in the
 background; it needs the container to run **privileged** (`docker-compose.yml` sets
@@ -136,7 +157,7 @@ background; it needs the container to run **privileged** (`docker-compose.yml` s
 run inside this container, so ports they publish are reachable through the preview proxy. If the
 container isn't privileged, dockerd fails to start and entrypoint logs it but jean still runs.
 
-`entrypoint.sh` flow: set `safe.directory '*'` → start Xvfb → start dockerd (bg) → start preview proxy (caddy, bg) → start Theia IDE (bg) →
+`entrypoint.sh` flow: set `safe.directory '*'` → start Xvfb → start dockerd (bg) → start preview proxy (caddy, bg) → start Theia IDE (bg) → start push relay (bg, if `JEAN_TOKEN`+`THEIA_HOST_SUFFIX`) →
 resolve auth args (`JEAN_TOKEN` set → `--token …`; else jean auto-generates and persists a
 token in the workspace volume) → print the login banner (a ready link + `qrencode` QR when
 `JEAN_PUBLIC_URL` is set) → `exec jean --headless`. Auth is always on: the wrapper

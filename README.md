@@ -13,6 +13,7 @@ Run [Jean](https://github.com/coollabsio/jean) in your browser, on your server. 
 
 - **Browser UI** - Jean's full interface served over HTTPS, token-protected
 - **Built-in IDE** - a bundled [Eclipse Theia](https://theia-ide.org/) editor (files, terminal, git, extensions) one tap away, no extra port
+- **Push notifications** - a `🔔` button subscribes your phone so the agent can buzz you when it finishes, errors, or needs approval - fire a task, pocket the phone, get pinged
 - **Preview URLs** - dev servers the agent starts are instantly reachable at `<port>.apps.your-domain` (same pattern as Codespaces/Gitpod)
 - **Docker-in-Docker** - agents can run `docker` and `docker compose`; requires `privileged: true`
 - **amd64 + arm64** - one image runs on x86 servers and ARM (Apple Silicon, Ampere/Graviton, Raspberry Pi)
@@ -79,6 +80,29 @@ Setup (Coolify):
 2. The agent must bind to `0.0.0.0`, e.g. `vite --host` or `php artisan serve --host 0.0.0.0 --port 8000`
 
 > Preview subdomains are **disabled (403) until you set `PREVIEW_PASSWORD`**, which gates every preview port behind one basic-auth login (`PREVIEW_USER` defaults to `dev`). This fails closed so a misconfigured deploy never exposes loopback ports to the internet.
+
+## Push notifications
+
+Agents run long; the point of coding from your phone is to walk away. A `🔔`
+button in Jean's toolbar subscribes this browser to Web Push, so you get a
+notification when an agent **finishes a turn**, **errors**, or **needs your
+approval** - even with the tab closed or the PWA backgrounded. Tapping the
+notification reopens Jean.
+
+How it works: a small relay watches Jean's own event stream (no fork) and fans
+the interesting events out as Web Push. It is reached through the **same preview
+proxy** as previews/IDE, at `https://jdpush.<your-wildcard-domain>`.
+
+Setup:
+1. Set a fixed **`JEAN_TOKEN`** (the relay validates subscribers with it) and
+   **`THEIA_HOST_SUFFIX`** (the preview wildcard, e.g. `.apps.you.dev`). The
+   feature is **disabled** until both are set, and the `🔔` button stays hidden.
+2. Open Jean over **HTTPS** and tap `🔔` to grant permission. On iOS, **add Jean
+   to your home screen first** - Safari only allows Web Push from an installed PWA.
+
+> Coverage note: "agent finished" / "agent errored" works for both Claude and
+> Codex. Explicit "needs approval" pushes currently fire for Codex; Claude
+> permission prompts still surface via the finished/errored events.
 
 ## Built-in IDE
 
@@ -158,3 +182,5 @@ Sysbox is a **host-installed runtime**, not part of the image: it can't be bundl
 | `PREVIEW_PASSWORD` | unset | Required to enable previews **and the IDE**; gates all preview subdomains behind basic auth (unset = 403) |
 | `THEIA_HOST_SUFFIX` | unset | Preview-wildcard host the `</> IDE` button targets (e.g. `.apps.you.dev`); empty falls back to `.<current-host>` |
 | `THEIA_DISPATCH_PORT` | `8444` | Internal loopback port for the per-worktree Theia dispatcher; reached via the preview proxy, never exposed directly |
+| `PUSH_SUBJECT` | `mailto:push@jean-dockerized.local` | VAPID contact the push relay sends to push services (use your email/URL) |
+| `PUSH_PORT` | `8455` | Internal loopback port for the Web Push relay; reached via the preview proxy at `jdpush.<wildcard>`, never exposed directly |

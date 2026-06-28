@@ -143,6 +143,52 @@ if [ -f /opt/theia/src-gen/backend/main.js ] && [ -f /opt/theia/theia-dispatcher
   fi
 fi
 
+# Web Push notifications: a relay (web/push-relay.mjs) observes jean's own
+# WebSocket and pushes a phone notification when an agent finishes, errors, or
+# needs approval - closing the async "fire a task, pocket the phone" loop.
+# Reached by the browser through the preview proxy at jdpush.<preview-wildcard>
+# (see proxy/Caddyfile @push), so it needs the SAME wildcard the IDE/previews use.
+# Fail-closed and opt-in: only runs when JEAN_TOKEN is set (it needs the token to
+# open jean's WS and to validate subscribers). The injected button (push-init.js)
+# stays hidden unless push-config.js below marks the feature enabled.
+PUSH_PORT="${PUSH_PORT:-8455}"
+DIST=/usr/local/bin/dist
+if [ -d "$DIST" ]; then
+  if [ -n "${JEAN_TOKEN:-}" ] && [ -n "${THEIA_HOST_SUFFIX:-}" ]; then
+    printf "window.__PUSH_ENABLED__=true\n" > "$DIST/push-config.js"
+  else
+    printf "window.__PUSH_ENABLED__=false\n" > "$DIST/push-config.js"
+  fi
+fi
+if [ -f /opt/push/push-relay.mjs ] && command -v node >/dev/null 2>&1; then
+  if [ -z "${JEAN_TOKEN:-}" ]; then
+    echo "[entrypoint] push notifications: DISABLED (set JEAN_TOKEN to enable)"
+  elif [ -z "${THEIA_HOST_SUFFIX:-}" ]; then
+    echo "[entrypoint] push notifications: DISABLED (set THEIA_HOST_SUFFIX - the preview wildcard - to enable)"
+  else
+    echo "[entrypoint] starting push relay on 127.0.0.1:${PUSH_PORT}"
+    start_push_relay() {
+      JEAN_TOKEN="${JEAN_TOKEN}" JEAN_PORT="${JEAN_PORT}" PUSH_PORT="${PUSH_PORT}" \
+        node /opt/push/push-relay.mjs >/tmp/push-relay.log 2>&1 &
+      PUSH_PID=$!
+    }
+    start_push_relay
+    sleep 1
+    if ! kill -0 "$PUSH_PID" 2>/dev/null; then
+      echo "[entrypoint] WARNING: push relay exited immediately, notifications unavailable" >&2
+      cat /tmp/push-relay.log >&2
+    else
+      echo "[entrypoint] push relay ready"
+      # Watchdog: restart the relay if it crashes (parity with caddy/dockerd/theia).
+      ( while sleep 15; do
+          kill -0 "$PUSH_PID" 2>/dev/null && continue
+          echo "[entrypoint] push relay died, restarting" >&2
+          start_push_relay
+        done ) &
+    fi
+  fi
+fi
+
 # Auth: jean generates+persists a token by default (in the workspace volume).
 # Override with a stable token via JEAN_TOKEN. Auth is always on by design --
 # this wrapper deliberately does not expose jean's --no-token flag.
