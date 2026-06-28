@@ -150,6 +150,23 @@ stays hidden otherwise. Like the IDE, push therefore needs the preview wildcard 
 approval pushes are Codex-only (Claude's permission events aren't separately enumerated in the
 jean bundle); Claude is still covered by `chat:done` / `chat:error`.
 
+**Mobile terminal key-bar.** Phone soft keyboards lack `Esc` / `Tab` / `Ctrl` / arrows, but
+jean's Claude backend runs an interactive TUI in jean's **own** terminal panel that needs them.
+A PWA can't swap the OS keyboard, so `web/term-keybar.js` (injected by `inject-pwa.mjs`, same
+pattern as `push-init.js`) renders its own row of those keys and feeds **synthetic
+`KeyboardEvent`s** straight to xterm.js's hidden `.xterm-helper-textarea` - the element xterm
+itself listens on - so jean is **not** forked (rendered DOM + browser only). It dispatches on
+the textarea, overriding `keyCode`/`which` (a constructed `KeyboardEvent` reports `0`, but older
+xterm reads them, notably for `Ctrl`+letter -> control byte) while also setting `key`/`code` for
+newer xterm. It `preventDefault`s on pointer/mousedown so a tap never steals focus from the
+textarea (the soft keyboard stays up), and uses `visualViewport` to sit the bar on top of the
+keyboard. It's gated to **coarse pointers** (`matchMedia('(pointer: coarse)')`) so it never shows
+on desktop, and only appears while an xterm textarea is focused. Printable chars are omitted on
+purpose (the keyboard's symbol layer has them, and xterm types those via `input` events, not
+synthetic keydown); the bar ships the missing keys plus one-tap `^C`/`^D`/`^R`/`^Z` and sticky
+`Ctrl`/`Alt` that modify the next `Esc`/`Tab`/arrow (e.g. `Ctrl`+arrow word-nav). Theia's
+terminal is a separate page and is out of scope.
+
 **Docker-in-Docker.** The image installs the full Docker engine (`docker-ce` + compose/buildx
 plugins, plus a `docker-compose` shim for the v1 name). `entrypoint.sh` starts `dockerd` in the
 background; it needs the container to run **privileged** (`docker-compose.yml` sets

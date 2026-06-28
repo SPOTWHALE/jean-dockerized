@@ -48,6 +48,7 @@ ${versionTags}    <script src="/theia-config.js" defer></script>
     <script src="/theia-launch.js" defer></script>
     <script src="/push-config.js" defer></script>
     <script src="/push-init.js" defer></script>
+    <script src="/term-keybar.js" defer></script>
 `
 
 if (!html.includes('</head>') || !html.includes('<head>')) {

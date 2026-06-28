@@ -125,7 +125,8 @@ ARG IMAGE_VERSION=
 # purge the package in the same layer so it doesn't land in the final image.
 RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-bin \
  && cp /tmp/web/manifest.webmanifest /tmp/web/sw.js /tmp/web/token.html \
-      /tmp/web/version-badge.js /tmp/web/theia-launch.js /tmp/web/push-init.js /usr/local/bin/dist/ \
+      /tmp/web/version-badge.js /tmp/web/theia-launch.js /tmp/web/push-init.js \
+      /tmp/web/term-keybar.js /usr/local/bin/dist/ \
  && printf "window.__THEIA_HOST_SUFFIX__=''\n" > /usr/local/bin/dist/theia-config.js \
  && printf "window.__PUSH_ENABLED__=false\n" > /usr/local/bin/dist/push-config.js \
  && rsvg-convert -w 192 -h 192 /tmp/web/icon.svg -o /usr/local/bin/dist/icon-192.png \
