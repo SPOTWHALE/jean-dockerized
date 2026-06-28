@@ -49,6 +49,7 @@ ${versionTags}    <script src="/theia-config.js" defer></script>
     <script src="/push-config.js" defer></script>
     <script src="/push-init.js" defer></script>
     <script src="/term-keybar.js" defer></script>
+    <script src="/chat-scroll-fix.js" defer></script>
 `
 
 if (!html.includes('</head>') || !html.includes('<head>')) {
