@@ -258,9 +258,11 @@
   }
 
   function mount() {
-    // Cheap gate: only act when a dialog (the preferences modal) is open.
-    var dlg = document.querySelector('[role="dialog"]')
-    if (!dlg) return
+    // Settings render either as a modal ([role=dialog], older jean) or a full-page
+    // route with a left nav (newer jean). Scope to the dialog when present, else the
+    // whole document so the full-page settings route is covered too. cellFor's FENCE
+    // walk still bounds each cloned row, so a document-wide scope stays safe.
+    var dlg = document.querySelector('[role="dialog"]') || document.body
     hideNav(dlg, 'Web Access')
     if (!document.getElementById(ROW_ID)) injectAgentRow(dlg)
     // Re-hide the web-irrelevant native rows every pass (survives re-render).
