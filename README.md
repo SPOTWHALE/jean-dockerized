@@ -60,11 +60,48 @@ record so Traefik terminates TLS itself.
 
 ## Run locally
 
+`docker-compose.yml` references the **published** image (`spotwhale/jean-dockerized:latest`)
+and has **no `build:` section**, so `docker compose up` on its own just pulls and runs the
+released image - it will **not** include local/branch changes or a Jean version you pick.
+
+<details>
+<summary><strong>Build &amp; run a local image</strong></summary>
+
+To run a local build you must build that tag yourself first:
+
 ```bash
-cp .env.example .env   # optional - set JEAN_TOKEN / preview auth
-docker compose up
-# open the ?token=... URL printed in the logs
+cp .env.example .env            # optional - JEAN_TOKEN / PREVIEW_PASSWORD / JEAN_PUBLIC_URL
+
+# Build the image for a published Jean release tag and name it :latest. The build
+# pulls the prebuilt `theia-base` automatically (only build it yourself after
+# editing theia/ - see "Common commands" in AGENTS.md).
+docker build --build-arg JEAN_REF=v0.1.60 -t spotwhale/jean-dockerized:latest .
+
+docker compose up -d            # runs the image you just built (no re-pull)
+docker compose logs -f          # startup banner prints the access token + login link
+# open the ?token=... URL from the logs
 ```
+
+Re-run the `docker build` + `docker compose up -d` after any change under `web/` to pick it up.
+
+</details>
+
+<details>
+<summary><strong>Test from your phone (same wifi)</strong></summary>
+
+Edit `docker-compose.yml` before `up`:
+
+- change the app bind `127.0.0.1:3456:3456` → `0.0.0.0:3456:3456` (loopback-only by default
+  won't accept LAN connections), and open your host firewall for port `3456`;
+- set `JEAN_PUBLIC_URL: http://<your-LAN-ip>:3456` - it prints a scannable QR in the logs and
+  enables the IDE button + push.
+
+Then scan the QR (or open `http://<your-LAN-ip>:3456/?token=...`).
+
+> Service workers / PWA install / Web Push need a **secure context**, so over plain
+> `http://<ip>` they're off; use `localhost` on the host, or an HTTPS tunnel/domain, for those.
+
+</details>
 
 **Lost or changed your token?** Open `https://your-domain/token.html?reset` to clear
 the saved token, then paste your access token again (from the logs or `JEAN_TOKEN`).
@@ -83,26 +120,28 @@ Setup (Coolify):
 
 ## Push notifications
 
-Agents run long; the point of coding from your phone is to walk away. A `🔔`
-button in Jean's toolbar subscribes this browser to Web Push, so you get a
-notification when an agent **finishes a turn**, **errors**, or **needs your
-approval** - even with the tab closed or the PWA backgrounded. Tapping the
-notification reopens Jean.
+Agents run long; the point of coding from your phone is to walk away. An
+**Agent notifications** toggle in **Settings → General → Notifications**
+subscribes this browser to Web Push, so you get a notification when an agent
+**finishes a turn**, **errors**, or **needs your approval** - even with the tab
+closed or the PWA backgrounded. Tapping the notification reopens Jean.
 
 How it works: a small relay watches Jean's own event stream (no fork) and fans
 the interesting events out as Web Push. It is reached through the **same preview
 proxy** as previews/IDE, at `https://jdpush.<your-wildcard-domain>`.
 
 Setup:
-1. Set a fixed **`JEAN_TOKEN`** (the relay validates subscribers with it) and
-   **`THEIA_HOST_SUFFIX`** (the preview wildcard, e.g. `.apps.you.dev`). The
-   feature is **disabled** until both are set, and the `🔔` button stays hidden.
+1. Set **`JEAN_PUBLIC_URL`** (your public host). Push uses subdomains of it
+   (`jdpush.<host>`), so this is what **enables** the feature and the `🔔` button;
+   it's **disabled** (button hidden) when unset. `JEAN_TOKEN` is optional - if
+   unset, the relay uses jean's auto-generated token.
 2. Open Jean over **HTTPS** and tap `🔔` to grant permission. On iOS, **add Jean
    to your home screen first** - Safari only allows Web Push from an installed PWA.
 
-> Coverage note: "agent finished" / "agent errored" works for both Claude and
-> Codex. Explicit "needs approval" pushes currently fire for Codex; Claude
-> permission prompts still surface via the finished/errored events.
+> Coverage note: for jean's native (Codex) sessions, "finished" / "errored" /
+> "needs approval" fire from chat events. The **Claude backend runs as a terminal
+> TUI** (no chat events), so it's covered by **idle detection** - a push when the
+> terminal goes quiet (finished or waiting). Tune or disable with `PUSH_IDLE_MS`.
 
 ## Built-in IDE
 
@@ -126,8 +165,8 @@ falling back to the picker when nothing is open.
 Setup:
 1. It is gated by the preview proxy, so it is **only reachable once `PREVIEW_PASSWORD`
    is set** (same basic-auth login as previews; fails closed otherwise).
-2. Set `THEIA_HOST_SUFFIX` to your preview-wildcard host (everything after the leading
-   label, e.g. `.apps.you.dev`) so the button builds correct links. Empty falls back to
+2. Set `JEAN_PUBLIC_URL` - the IDE wildcard is subdomains of its host, derived
+   automatically so the button builds correct links. Unset falls back to
    `.<current-host>`.
 
 > **Cosmetic scoping, not a security boundary.** Each Theia only roots the sidebar at
@@ -175,12 +214,12 @@ Sysbox is a **host-installed runtime**, not part of the image: it can't be bundl
 | Env | Default | Description |
 |-----|---------|-------------|
 | `JEAN_TOKEN` | auto-generated | Fixed access token (persisted in the workspace volume if unset) |
-| `JEAN_PUBLIC_URL` | unset | Public URL of this instance; when set, the startup banner prints a ready login link + QR |
+| `JEAN_PUBLIC_URL` | unset | Public URL of this instance; prints the login link + QR, and supplies the preview/IDE/push wildcard (subdomains of its host) - so it also enables the `</> IDE` button and push |
 | `JEAN_PORT` | `3456` | Jean web UI port |
 | `PREVIEW_PORT` | `8088` | Preview reverse-proxy port |
 | `PREVIEW_USER` | `dev` | Username for preview basic auth |
 | `PREVIEW_PASSWORD` | unset | Required to enable previews **and the IDE**; gates all preview subdomains behind basic auth (unset = 403) |
-| `THEIA_HOST_SUFFIX` | unset | Preview-wildcard host the `</> IDE` button targets (e.g. `.apps.you.dev`); empty falls back to `.<current-host>` |
 | `THEIA_DISPATCH_PORT` | `8444` | Internal loopback port for the per-worktree Theia dispatcher; reached via the preview proxy, never exposed directly |
 | `PUSH_SUBJECT` | `mailto:push@jean-dockerized.local` | VAPID contact the push relay sends to push services (use your email/URL) |
 | `PUSH_PORT` | `8455` | Internal loopback port for the Web Push relay; reached via the preview proxy at `jdpush.<wildcard>`, never exposed directly |
+| `PUSH_IDLE_MS` | `20000` | Terminal-Claude idle push: notify after this many ms of no terminal output (finished/waiting). `0` disables idle pushes |

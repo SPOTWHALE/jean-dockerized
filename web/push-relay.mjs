@@ -1,3 +1,5 @@
+// @wrapper-status: STOPGAP - remove when jean delivers web push itself. See
+// AGENTS.md "Injected patch layer".
 // Web Push relay: turns jean's agent activity into phone notifications, so you
 // can fire a task, pocket the phone, and get buzzed when the agent finishes or
 // needs you. jean is NOT forked - this only *observes* jean's own WebSocket and
@@ -11,10 +13,11 @@
 //     at jdpush.<wildcard>) to fetch the VAPID public key and register/unregister
 //     its push subscription.
 //
-// Fail-closed: this process is only started by entrypoint.sh when JEAN_TOKEN is
-// set (it needs the token to open jean's WS anyway). Subscribe/unsubscribe
-// require that same token, so only an authenticated jean user can register a
-// device. The VAPID public key is, by design, public (it gates nothing).
+// Token: JEAN_TOKEN if set, else jean's auto-generated http_server_token read
+// from its prefs file (so push works with the generated token). It's needed to
+// open jean's WS, and subscribe/unsubscribe require that same token, so only an
+// authenticated jean user can register a device. The VAPID public key is, by
+// design, public (it gates nothing).
 //
 // Zero-runtime-config crypto is delegated to `web-push` (RFC 8291/8292 payload
 // encryption + VAPID JWT). It resolves from /opt/push/node_modules (installed in
@@ -27,15 +30,49 @@ import webpush from 'web-push'
 
 const JEAN_PORT = process.env.JEAN_PORT || '3456'
 const PUSH_PORT = Number(process.env.PUSH_PORT || 8455)
-const JEAN_TOKEN = process.env.JEAN_TOKEN || ''
+let TOKEN = process.env.JEAN_TOKEN || ''
+// Where jean persists its auto-generated HTTP token (HOME=/workspace). Used as a
+// fallback so push works without anyone setting JEAN_TOKEN.
+const PREFS = process.env.JEAN_PREFS || '/workspace/.local/share/com.jean.desktop/preferences.json'
 const SUBJECT = process.env.PUSH_SUBJECT || 'mailto:push@jean-dockerized.local'
 const STATE_DIR = process.env.PUSH_STATE_DIR || '/workspace/.jean-push'
+// jean's "Claude backend" runs Claude Code as a TUI in a terminal pane, which
+// emits ONLY terminal:* events (never chat:done / chat:codex_*). So for that
+// backend the chat-event map below never fires; we instead detect end-of-turn
+// by terminal idle: Claude animates its spinner while working, so a gap with no
+// terminal:output means it finished or is waiting for you. PUSH_IDLE_MS is that
+// gap (0 disables idle push, leaving only the chat-event notifications).
+// Heuristic, not exact: Claude's spinner does NOT stream, so silent gaps of
+// several seconds are normal mid-turn (a quiet tool call) - measured gaps up to
+// ~11s. Default 20s trades promptness for fewer mid-work false fires; same-tag
+// notifications replace rather than stack, so a false fire is corrected by the
+// real one. Lower it if you prefer faster (noisier) pings.
+const IDLE_MS = Number(process.env.PUSH_IDLE_MS || 20000)
 
-if (!JEAN_TOKEN) {
-  // Should never happen (entrypoint guards it) - but never run token-less.
-  console.error('[push] JEAN_TOKEN not set; relay disabled')
+// No explicit JEAN_TOKEN? Fall back to jean's auto-generated, persisted token.
+// The relay is launched just before jean, so on first boot the prefs file may
+// not exist yet - poll for http_server_token rather than fail. This is what lets
+// push work with the generated token (no manual JEAN_TOKEN needed). Top-level
+// await is fine in this ESM module on Node 22.
+if (!TOKEN) {
+  console.log('[push] no JEAN_TOKEN set; waiting for jean http_server_token in prefs...')
+  for (let i = 0; i < 180 && !TOKEN; i++) {
+    try {
+      const prefs = JSON.parse(readFileSync(PREFS, 'utf8'))
+      if (prefs && typeof prefs.http_server_token === 'string' && prefs.http_server_token) {
+        TOKEN = prefs.http_server_token
+      }
+    } catch {
+      /* prefs not written yet */
+    }
+    if (!TOKEN) await new Promise((r) => setTimeout(r, 1000))
+  }
+}
+if (!TOKEN) {
+  console.error('[push] no token (JEAN_TOKEN unset and no http_server_token in prefs); relay disabled')
   process.exit(0)
 }
+console.log('[push] token resolved; relay starting')
 
 // --- VAPID keys: generate once, persist on the volume so subscriptions made by
 // browsers stay valid across restarts (the key pair is the subscription's identity).
@@ -77,9 +114,9 @@ function saveSubs() {
 }
 
 function tokenOk(given) {
-  if (typeof given !== 'string' || given.length !== JEAN_TOKEN.length) return false
+  if (typeof given !== 'string' || given.length !== TOKEN.length) return false
   try {
-    return timingSafeEqual(Buffer.from(given), Buffer.from(JEAN_TOKEN))
+    return timingSafeEqual(Buffer.from(given), Buffer.from(TOKEN))
   } catch {
     return false
   }
@@ -118,6 +155,7 @@ function notificationFor(event, payload) {
     case 'chat:codex_command_approval_request':
     case 'chat:codex_permission_request':
     case 'chat:codex_user_input_request':
+    case 'chat:codex_dynamic_tool_call_request':
     case 'chat:codex_mcp_elicitation_request':
       return { title: 'Jean: needs your approval', body: 'The agent is waiting for you to respond.', tag }
     default:
@@ -125,11 +163,37 @@ function notificationFor(event, payload) {
   }
 }
 
+// --- Terminal idle detection (Claude-backend "end of turn"). Keyed by the
+// terminal_id on every terminal:output; each new chunk reschedules the timer, so
+// it only fires after IDLE_MS of true silence. One push per idle gap: the timer
+// is cleared on fire, and the next output starts a fresh one (next turn).
+const termTimers = new Map()
+function noteTerminalOutput(termId) {
+  if (!IDLE_MS || !termId) return
+  clearTimeout(termTimers.get(termId))
+  termTimers.set(
+    termId,
+    setTimeout(() => {
+      termTimers.delete(termId)
+      broadcast({
+        title: 'Jean: Claude is idle',
+        body: 'Claude stopped output - it finished or is waiting for you.',
+        tag: 'term:' + termId,
+      }).catch(() => {})
+    }, IDLE_MS)
+  )
+}
+function clearTerminal(termId) {
+  if (!termId) return
+  clearTimeout(termTimers.get(termId))
+  termTimers.delete(termId)
+}
+
 // --- WebSocket client to jean. Reconnects with backoff; jean's heartbeats keep
 // it alive and we simply ignore everything that isn't a notify-worthy event.
 let backoff = 1000
 function connectJean() {
-  const ws = new WebSocket(`ws://127.0.0.1:${JEAN_PORT}/ws?token=${encodeURIComponent(JEAN_TOKEN)}`)
+  const ws = new WebSocket(`ws://127.0.0.1:${JEAN_PORT}/ws?token=${encodeURIComponent(TOKEN)}`)
   ws.addEventListener('open', () => {
     backoff = 1000
     console.log('[push] connected to jean WS')
@@ -142,10 +206,21 @@ function connectJean() {
       return
     }
     if (msg.type !== 'event' || !msg.event) return
+    // Terminal (Claude-backend) idle tracking. terminal:stopped means the shell
+    // exited, so cancel any pending idle push for it.
+    if (msg.event === 'terminal:output') return noteTerminalOutput(msg.payload && msg.payload.terminal_id)
+    if (msg.event === 'terminal:stopped') return clearTerminal(msg.payload && msg.payload.terminal_id)
     const n = notificationFor(msg.event, msg.payload)
     if (n) broadcast(n).catch(() => {})
   })
+  // Retry on BOTH error and close, guarded so the pair doesn't double-schedule.
+  // A refused initial connect (jean not up yet at boot) fires 'error' but often
+  // no 'close' under Node's global WebSocket, so retrying on 'close' alone would
+  // stall forever - the relay must keep retrying until jean's WS is listening.
+  let retried = false
   const retry = () => {
+    if (retried) return
+    retried = true
     backoff = Math.min(backoff * 2, 30000)
     setTimeout(connectJean, backoff)
   }
@@ -156,6 +231,7 @@ function connectJean() {
     } catch {
       /* already closing */
     }
+    retry()
   })
 }
 connectJean()

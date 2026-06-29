@@ -143,12 +143,17 @@ browser through the **preview proxy** at `jdpush.<wildcard>` - a reserved Caddy 
 does its own jean-token check on `/subscribe` (timing-safe), and `/key` only returns the public
 VAPID key. The browser side is `web/push-init.js` (a `🔔` toolbar button, injected by
 `inject-pwa.mjs` like `theia-launch.js`) plus `push` / `notificationclick` handlers added to
-`web/sw.js`. Fail-closed and opt-in: `entrypoint.sh` only starts the relay when **`JEAN_TOKEN`**
-(needed for the WS + subscriber auth) and **`THEIA_HOST_SUFFIX`** (the wildcard host the button
-targets) are both set, and writes `push-config.js` (`window.__PUSH_ENABLED__`) so the button
-stays hidden otherwise. Like the IDE, push therefore needs the preview wildcard domain. v1
-approval pushes are Codex-only (Claude's permission events aren't separately enumerated in the
-jean bundle); Claude is still covered by `chat:done` / `chat:error`.
+`web/sw.js`. Fail-closed and opt-in: `entrypoint.sh` starts the relay only when **`JEAN_PUBLIC_URL`** is set
+(push lives at `jdpush.<its host>`, the same single-wildcard the IDE/previews use - derived in
+`entrypoint.sh` as `HOST_SUFFIX`, no separate suffix env), and writes `push-config.js`
+(`window.__PUSH_ENABLED__`) so the button stays hidden otherwise. The relay resolves jean's token
+itself: `JEAN_TOKEN` if set, else jean's persisted `http_server_token` (polled from the prefs
+file), so push works with the auto-generated token. Coverage: Codex/native sessions notify from
+`chat:*` events (finished / errored / approval, incl. `chat:codex_dynamic_tool_call_request`).
+The **Claude backend runs as a terminal TUI** - it emits only `terminal:*` events, no `chat:*` -
+so it's covered by **idle detection**: the relay pushes when a terminal goes quiet for
+`PUSH_IDLE_MS` (default 20s; `0` disables), keyed by `terminal_id` and cancelled on
+`terminal:stopped`.
 
 **Mobile terminal key-bar.** Phone soft keyboards lack `Esc` / `Tab` / `Ctrl` / arrows, but
 jean's Claude backend runs an interactive TUI in jean's **own** terminal panel that needs them.
@@ -158,14 +163,37 @@ pattern as `push-init.js`) renders its own row of those keys and feeds **synthet
 itself listens on - so jean is **not** forked (rendered DOM + browser only). It dispatches on
 the textarea, overriding `keyCode`/`which` (a constructed `KeyboardEvent` reports `0`, but older
 xterm reads them, notably for `Ctrl`+letter -> control byte) while also setting `key`/`code` for
-newer xterm. It `preventDefault`s on pointer/mousedown so a tap never steals focus from the
-textarea (the soft keyboard stays up), and uses `visualViewport` to sit the bar on top of the
-keyboard. It's gated to **coarse pointers** (`matchMedia('(pointer: coarse)')`) so it never shows
-on desktop, and only appears while an xterm textarea is focused. Printable chars are omitted on
-purpose (the keyboard's symbol layer has them, and xterm types those via `input` events, not
-synthetic keydown); the bar ships the missing keys plus one-tap `^C`/`^D`/`^R`/`^Z` and sticky
-`Ctrl`/`Alt` that modify the next `Esc`/`Tab`/arrow (e.g. `Ctrl`+arrow word-nav). Theia's
+newer xterm. Keys are dispatched on the textarea **without focusing it** (so the bar works with
+the OS keyboard down) and the textarea is blurred on open to dismiss the keyboard. The keys live
+in a panel that is **hidden by default** and toggled by a floating button (FAB); opening it adds a
+`.jd-keybar-open` class + `--jd-kb` var to `<html>` that shrinks jean's `100dvh` containers so the
+panel **pushes content up** instead of overlaying the terminal, then fires a `resize` so xterm
+refits. Keys fire on tap-**release** (a >10px drag cancels, so scrolls/mis-touches don't fire) and
+the panel scrolls horizontally. Gated to **coarse pointers** (`matchMedia('(pointer: coarse)')`) so
+it never shows on desktop; the FAB appears whenever a terminal exists. The bar ships
+`Esc`/`Tab`/`Enter`/arrows, one-tap `^C`/`^D`/`^R`/`^Z`, and sticky `Ctrl`/`Alt`; printables Claude
+needs (`?`, `/`) are injected via the textarea's `input` event (a synthetic keydown won't type
+them). It also translates a vertical one-finger drag over the terminal into `WheelEvent`s on
+`.xterm-viewport` so the Claude TUI (which keeps no DOM scrollback) is touch-scrollable. Theia's
 terminal is a separate page and is out of scope.
+
+**Injected patch layer (`web/`).** Everything under `web/` augments **unmodified** jean through
+`inject-pwa.mjs` (rendered DOM + browser APIs only - never jean's source). Each script carries a
+`@wrapper-status` tag - **WRAPPER** (intrinsic to this being a *separate packaging repo*; stays
+while the wrapper exists) or **STOPGAP** (fills a *current* jean gap and could be obsoleted if
+upstream ships an equivalent - including a built-in web IDE or PWA). Don't assume a STOPGAP is
+forever; check upstream before re-investing in one.
+
+| Asset | Status | Patches | Remove when |
+|---|---|---|---|
+| `version-badge.js` | wrapper | re-points jean's badge to THIS repo's releases + update pill | this stops being a separate repo |
+| `inject-pwa.mjs` | wrapper | wires every patch below into `index.html` (+ cache-busts them) | no patches remain to inject |
+| `theia-launch.js` + `theia-dispatcher.mjs` | stopgap | bundled Theia IDE button + per-worktree backend | jean ships a built-in browser IDE |
+| `sw.js`, `manifest.webmanifest`, icons | stopgap | PWA installability | jean ships its own manifest + service worker for headless web |
+| `token.html` + index guard | stopgap | headless token entry (jean's web client has no token field) | jean's web client gains a token field |
+| `term-keybar.js` | stopgap | mobile key-bar + TUI touch-scroll | jean ships a mobile keybar + touch-scrollable TUI |
+| `push-init.js` | stopgap | web-push toggle in Settings; hides desktop-only rows + the Web Access tab | jean adds web push + hides desktop-only settings in web |
+| `push-relay.mjs` | stopgap | server side of web push (observes jean's WS) | jean delivers web push itself |
 
 **Docker-in-Docker.** The image installs the full Docker engine (`docker-ce` + compose/buildx
 plugins, plus a `docker-compose` shim for the v1 name). `entrypoint.sh` starts `dockerd` in the
@@ -174,7 +202,7 @@ background; it needs the container to run **privileged** (`docker-compose.yml` s
 run inside this container, so ports they publish are reachable through the preview proxy. If the
 container isn't privileged, dockerd fails to start and entrypoint logs it but jean still runs.
 
-`entrypoint.sh` flow: set `safe.directory '*'` → start Xvfb → start dockerd (bg) → start preview proxy (caddy, bg) → start Theia IDE (bg) → start push relay (bg, if `JEAN_TOKEN`+`THEIA_HOST_SUFFIX`) →
+`entrypoint.sh` flow: set `safe.directory '*'` → start Xvfb → start dockerd (bg) → start preview proxy (caddy, bg) → start Theia IDE (bg) → start push relay (bg, if `JEAN_PUBLIC_URL` set) →
 resolve auth args (`JEAN_TOKEN` set → `--token …`; else jean auto-generates and persists a
 token in the workspace volume) → print the login banner (a ready link + `qrencode` QR when
 `JEAN_PUBLIC_URL` is set) → `exec jean --headless`. Auth is always on: the wrapper

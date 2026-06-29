@@ -1,3 +1,5 @@
+// @wrapper-status: STOPGAP - PWA installability; remove if jean ships its own
+// manifest + service worker for headless web.
 // Minimal service worker. Its only job is to make the app installable on
 // Android (Chrome's install criteria require a fetch handler). It deliberately
 // does NOT cache anything - every request goes straight to the network - so
