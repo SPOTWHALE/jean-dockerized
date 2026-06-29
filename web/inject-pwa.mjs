@@ -1,3 +1,5 @@
+// @wrapper-status: WRAPPER - injector infra; needed as long as any patch exists.
+// See AGENTS.md "Injected patch layer".
 // Injects PWA <head> tags into jean's built index.html. Run at Docker build
 // time against /src/dist/index.html. Idempotent: skips if already injected.
 // Jean's own source is never modified - only the static build output.
@@ -29,23 +31,34 @@ const guard = `<script>(function(){try{var u=/[?&]token=/.test(location.search);
 // repo and shows an update pill. Absent on local/dev builds -> the badge is
 // left untouched (the script no-ops without a version).
 const imageVersion = process.env.IMAGE_VERSION || ''
+// jean serves every static asset with `Cache-Control: immutable, max-age=1yr`,
+// and our injected files have stable (non-hashed) names, so a browser that
+// visited once NEVER refetches an updated version-badge.js / push-init.js /
+// term-keybar.js / chat-scroll-fix.js. Bake a per-build cache-bust token into
+// each injected URL so every image build is a fresh URL the cache must refetch.
+// IMAGE_VERSION on releases; a build timestamp on local/dev builds.
+const bust = imageVersion || `dev${Date.now()}`
+const v = `?v=${encodeURIComponent(bust)}`
 const versionTags = imageVersion
   ? `    <script>window.__IMAGE_VERSION__=${JSON.stringify(imageVersion)}</script>
-    <script src="/version-badge.js" defer></script>
+    <script src="/version-badge.js${v}" defer></script>
 `
   : ''
 
 const tags = `
-    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="manifest" href="/manifest.webmanifest${v}">
     <meta name="theme-color" content="#0b0b0c">
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png${v}">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Jean">
     <script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}</script>
-${versionTags}    <script src="/theia-config.js" defer></script>
-    <script src="/theia-launch.js" defer></script>
+${versionTags}    <script src="/theia-config.js${v}" defer></script>
+    <script src="/theia-launch.js${v}" defer></script>
+    <script src="/push-config.js${v}" defer></script>
+    <script src="/push-init.js${v}" defer></script>
+    <script src="/term-keybar.js${v}" defer></script>
 `
 
 if (!html.includes('</head>') || !html.includes('<head>')) {
@@ -58,6 +71,6 @@ html = html.replace('<head>', '<head>\n    ' + guard)
 html = html.replace('</head>', tags + '  </head>')
 writeFileSync(file, html)
 console.log(
-  '[pwa] injected token guard, manifest, icons, service worker, and Theia launcher' +
+  '[pwa] injected token guard, manifest, icons, service worker, Theia launcher, and push' +
     (imageVersion ? ` + version badge (${imageVersion})` : '')
 )

@@ -45,6 +45,17 @@
 		}
 	}
 
+	# Reserved label `jdpush.<host>` -> the Web Push relay (web/push-relay.mjs on
+	# PUSH_PORT). Matched BEFORE the generic @named theia route below (which would
+	# otherwise swallow it, since `jdpush` starts with a letter). NOT behind the
+	# basic-auth gate: the relay does its own jean-token check on /subscribe, and
+	# the only other route (/key) returns the public VAPID key, which gates nothing.
+	# Forwards to a fixed loopback port (no user-controlled target -> no SSRF).
+	@push header_regexp ph Host ^jdpush\.
+	handle @push {
+		reverse_proxy 127.0.0.1:{$PUSH_PORT:8455}
+	}
+
 	# A non-numeric leading label (a name, not a port) -> the per-worktree Theia
 	# dispatcher (web/theia-dispatcher.mjs on THEIA_DISPATCH_PORT). e.g. ide.<host>
 	# = worktree picker, <repo>-<branch>.<host> = that worktree's scoped Theia. The

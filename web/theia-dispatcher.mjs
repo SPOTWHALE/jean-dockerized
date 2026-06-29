@@ -1,3 +1,5 @@
+// @wrapper-status: STOPGAP - bundled Theia IDE backend; remove if jean ships a
+// built-in browser IDE.
 // Per-worktree Theia dispatcher (zero external deps; node builtins only).
 //
 // One Theia process can only have one workspace root, so to give each repo/branch a

@@ -1,3 +1,5 @@
+// @wrapper-status: WRAPPER - intrinsic: re-points jean's badge to THIS repo's
+// releases; lives as long as this is a separate packaging repo.
 // Re-points jean's top-right version badge to THIS image's release and shows an
 // "Update available" pill when SPOTWHALE/jean-dockerized has a newer release.
 //

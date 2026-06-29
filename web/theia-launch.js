@@ -1,3 +1,5 @@
+// @wrapper-status: STOPGAP - our bundled Theia IDE button; remove if jean ships
+// a built-in browser IDE. See AGENTS.md "Injected patch layer".
 // Adds a "</> IDE" button to jean's top-right session toolbar. It opens a per-worktree
 // scoped Eclipse Theia editor (one Theia rooted at the active repo/branch worktree),
 // served by web/theia-dispatcher.mjs through the preview proxy:
@@ -10,8 +12,8 @@
 // and listen to jean's own CustomEvents - we never reach into its React state.
 //
 // The host suffix comes from /theia-config.js (window.__THEIA_HOST_SUFFIX__), written by
-// entrypoint.sh from THEIA_HOST_SUFFIX (the preview wildcard, e.g. .apps.you.dev or
-// .localhost:8088). Auth is the preview basic-auth gate (fails closed without PREVIEW_PASSWORD).
+// entrypoint.sh as subdomains of JEAN_PUBLIC_URL's host (the preview wildcard, e.g.
+// .jean.example.com). Auth is the preview basic-auth gate (fails closed without PREVIEW_PASSWORD).
 (function () {
   var BTN_ID = 'jd-ide-btn'
   // Latest worktree directory jean told us about, via its CustomEvents. Null until the

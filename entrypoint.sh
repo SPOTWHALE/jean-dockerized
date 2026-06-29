@@ -106,16 +106,30 @@ fi
 # non-numeric leading label here, behind the same basic-auth gate). COSMETIC scoping
 # only - NOT a security boundary (a Theia's terminal still reaches all of /workspace).
 # HOME=/workspace, so Theia settings persist on the volume. Skipped if app/node absent.
+#
+# Preview-wildcard host suffix (everything after the leading label) used by the IDE
+# button, previews, and push to build <label>.<suffix>. This image assumes a
+# single-wildcard deploy - the app and its preview subdomains live under one host
+# (app jean.example.com, previews/IDE/push *.jean.example.com) - so the suffix is
+# just JEAN_PUBLIC_URL's host. No separate env: set JEAN_PUBLIC_URL and the IDE,
+# previews, and push all derive it. Unset -> empty, and the injected client falls
+# back to ".<current-host>" (correct in a single-wildcard deploy anyway).
+HOST_SUFFIX=""
+if [ -n "${JEAN_PUBLIC_URL:-}" ]; then
+  _h="${JEAN_PUBLIC_URL#*://}"   # strip scheme
+  _h="${_h%%/*}"                 # strip path
+  HOST_SUFFIX=".${_h}"
+fi
 THEIA_DISPATCH_PORT="${THEIA_DISPATCH_PORT:-8444}"
 if [ -f /opt/theia/src-gen/backend/main.js ] && [ -f /opt/theia/theia-dispatcher.mjs ] && command -v node >/dev/null 2>&1; then
-  # Tell the injected launcher (web/theia-launch.js) the preview-wildcard host suffix it
-  # uses to build <slug>.<suffix> (e.g. .apps.you.dev, or .localhost:8088 locally). The
-  # dispatcher is reachable there through the proxy. Empty -> the button falls back to
-  # ".<current-host>". JSON-encoded via node to avoid shell-quoting pitfalls.
+  # Tell the injected launcher (web/theia-launch.js) the preview-wildcard host suffix
+  # it uses to build <slug>.<suffix> (e.g. .jean.example.com). Derived from
+  # JEAN_PUBLIC_URL above; empty -> the button falls back to ".<current-host>".
+  # JSON-encoded via node to avoid shell-quoting pitfalls.
   DIST=/usr/local/bin/dist
   if [ -d "$DIST" ]; then
     printf "window.__THEIA_HOST_SUFFIX__=%s\n" \
-      "$(node -e 'process.stdout.write(JSON.stringify(process.env.THEIA_HOST_SUFFIX||""))')" \
+      "$(JD_SUFFIX="$HOST_SUFFIX" node -e 'process.stdout.write(JSON.stringify(process.env.JD_SUFFIX||""))')" \
       > "$DIST/theia-config.js"
   fi
 
@@ -140,6 +154,52 @@ if [ -f /opt/theia/src-gen/backend/main.js ] && [ -f /opt/theia/theia-dispatcher
         echo "[entrypoint] Theia dispatcher died, restarting" >&2
         start_theia_dispatch
       done ) &
+  fi
+fi
+
+# Web Push notifications: a relay (web/push-relay.mjs) observes jean's own
+# WebSocket and pushes a phone notification when an agent finishes, errors, or
+# needs approval - closing the async "fire a task, pocket the phone" loop.
+# Reached by the browser through the preview proxy at jdpush.<preview-wildcard>
+# (see proxy/Caddyfile @push), so it needs the wildcard host the IDE/previews use -
+# which is derived from JEAN_PUBLIC_URL (HOST_SUFFIX above). So setting JEAN_PUBLIC_URL
+# is what enables push. The relay resolves jean's token itself: JEAN_TOKEN if you set
+# one, otherwise jean's auto-generated, persisted http_server_token (it polls the
+# prefs file for it). So push works out of the box with the generated token. The
+# injected button (push-init.js) stays hidden unless push-config.js below enables it.
+PUSH_PORT="${PUSH_PORT:-8455}"
+DIST=/usr/local/bin/dist
+if [ -d "$DIST" ]; then
+  if [ -n "$HOST_SUFFIX" ]; then
+    printf "window.__PUSH_ENABLED__=true\n" > "$DIST/push-config.js"
+  else
+    printf "window.__PUSH_ENABLED__=false\n" > "$DIST/push-config.js"
+  fi
+fi
+if [ -f /opt/push/push-relay.mjs ] && command -v node >/dev/null 2>&1; then
+  if [ -z "$HOST_SUFFIX" ]; then
+    echo "[entrypoint] push notifications: DISABLED (set JEAN_PUBLIC_URL to enable)"
+  else
+    echo "[entrypoint] starting push relay on 127.0.0.1:${PUSH_PORT}"
+    start_push_relay() {
+      JEAN_TOKEN="${JEAN_TOKEN:-}" JEAN_PORT="${JEAN_PORT}" PUSH_PORT="${PUSH_PORT}" \
+        node /opt/push/push-relay.mjs >/tmp/push-relay.log 2>&1 &
+      PUSH_PID=$!
+    }
+    start_push_relay
+    sleep 1
+    if ! kill -0 "$PUSH_PID" 2>/dev/null; then
+      echo "[entrypoint] WARNING: push relay exited immediately, notifications unavailable" >&2
+      cat /tmp/push-relay.log >&2
+    else
+      echo "[entrypoint] push relay ready"
+      # Watchdog: restart the relay if it crashes (parity with caddy/dockerd/theia).
+      ( while sleep 15; do
+          kill -0 "$PUSH_PID" 2>/dev/null && continue
+          echo "[entrypoint] push relay died, restarting" >&2
+          start_push_relay
+        done ) &
+    fi
   fi
 fi
 
