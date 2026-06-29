@@ -168,6 +168,8 @@ ENV THEIA_PORT=8443 \
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY agent-safety.md /app/agent-safety.md
+# agent-safety.md is written to /workspace/.claude/CLAUDE.md by entrypoint.sh
 
 # HOME drives where jean's clone/new-project picker defaults and where the AI
 # CLIs + jean store config/creds. Point it at /workspace so new repos land on

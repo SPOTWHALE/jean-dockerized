@@ -16,6 +16,21 @@ export PATH="${HOME:-/workspace}/.local/bin:${PATH}"
 # from accumulating duplicate entries across restarts.
 git config --global --replace-all safe.directory '*' || true
 
+# Write AI agent safety rules at startup so they apply to every repo cloned
+# under /workspace/. Claude Code picks up ~/.claude/CLAUDE.md (HOME=/workspace)
+# globally; Codex gets the rules appended to /workspace/AGENTS.md once.
+# Source is /app/agent-safety.md (baked into the image); rewriting on each
+# start keeps the rules in sync with the image version.
+if [ -f /app/agent-safety.md ]; then
+  mkdir -p /workspace/.claude
+  cp /app/agent-safety.md /workspace/.claude/CLAUDE.md
+  # Append to AGENTS.md (Codex) if safety rules not already present
+  if ! grep -qF "AI Agent Safety Rules" /workspace/AGENTS.md 2>/dev/null; then
+    { echo; echo "---"; cat /app/agent-safety.md; } >> /workspace/AGENTS.md
+  fi
+  echo "[entrypoint] wrote AI agent safety rules to /workspace/.claude/CLAUDE.md + appended to /workspace/AGENTS.md"
+fi
+
 # jean inits a GTK event loop even in --headless, so it needs a display.
 # Start Xvfb explicitly (xvfb-run is unreliable as PID 1) and point DISPLAY at it.
 echo "[entrypoint] starting Xvfb on :99"
