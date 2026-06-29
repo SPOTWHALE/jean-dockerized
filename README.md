@@ -22,13 +22,25 @@ Run [Jean](https://github.com/coollabsio/jean) in your browser, on your server. 
 
 ## Screenshots
 
+**Mobile (installable PWA)**
+
 <table>
 <tr>
-<td><img src="https://github.com/user-attachments/assets/b9e0c516-cd6d-4b12-af3e-4e78e7bfb3fb" height="500" alt="Screenshot 1" /></td>
-<td><img src="https://github.com/user-attachments/assets/ca60e4a5-0b7b-49a2-b33c-da25cd91df6a" height="500" alt="Screenshot 2" /></td>
-<td><img src="https://github.com/user-attachments/assets/3b84866b-ba31-44eb-898a-3ade7786bd07" height="500" alt="Screenshot 3" /></td>
-<td><img src="https://github.com/user-attachments/assets/74bfc430-8318-4887-b2b0-d78a66a24a15" height="500" alt="Screenshot 4" /></td>
-<td><img src="https://github.com/user-attachments/assets/1ddc533d-cbcc-4258-a9e0-932e424b201b" height="500" alt="Screenshot 5" /></td>
+<td><img src="screenshots/jean-1.png" height="500" alt="Mobile chat - Claude Code session" /></td>
+<td><img src="screenshots/jean-4.png" height="500" alt="Mobile terminal with keybar and effort selector" /></td>
+</tr>
+</table>
+
+**Web UI &amp; built-in IDE**
+
+<table>
+<tr>
+<td><img src="screenshots/jean-2.png" width="420" alt="Web UI - project session" /></td>
+<td><img src="screenshots/jean-3.png" width="420" alt="Worktree dashboard" /></td>
+</tr>
+<tr>
+<td><img src="screenshots/jean-6.png" width="420" alt="Per-worktree Theia IDE in the browser" /></td>
+<td><img src="screenshots/jean-5.png" width="420" alt="One-click Coolify deploy" /></td>
 </tr>
 </table>
 
