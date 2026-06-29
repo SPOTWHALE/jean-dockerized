@@ -75,12 +75,11 @@ services:
       # Bundled Theia IDE (per-worktree, COSMETIC scoping - not a security boundary).
       # A dispatcher runs one Theia per git worktree, reached through the preview proxy:
       # ide.<wildcard> = picker, <repo>-<branch>.<wildcard> = that worktree's editor.
-      # THEIA_HOST_SUFFIX is the preview-wildcard host the "</> IDE" button targets
-      # (everything after the leading label). Required for correct button links.
-      # THEIA_HOST_SUFFIX: .apps.you.dev
+      # The IDE/preview/push wildcard is subdomains of JEAN_PUBLIC_URL's host (derived
+      # automatically - no separate suffix env).
       # Public URL of this instance. When set, the startup banner prints a ready
-      # login link (and a scannable QR) so onboarding is one tap on a phone.
-      # JEAN_PUBLIC_URL: https://jean.example.com
+      # login link (and a scannable QR), and it's what enables the IDE button + push.
+      JEAN_PUBLIC_URL: http://localhost:3456
       # Leave unset and jean auto-generates + persists a token.
       # JEAN_TOKEN: change-me-to-a-long-random-string
     deploy:
