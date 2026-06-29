@@ -53,7 +53,13 @@ const tags = `
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Jean">
-    <script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}</script>
+    <!-- Register with the cache-bust query so each build registers a fresh script
+         URL. jean serves /sw.js as immutable/max-age=1yr, so a CDN (Cloudflare)
+         otherwise pins a stale worker across redeploys; the ?v= makes the URL a
+         cache miss each build. The query does NOT change the SW scope (stays /),
+         so existing push subscriptions survive; same-scope re-register just
+         swaps the worker. -->
+    <script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/sw.js${v}').catch(function(){})})}</script>
 ${versionTags}    <script src="/theia-config.js${v}" defer></script>
     <script src="/theia-launch.js${v}" defer></script>
     <script src="/push-config.js${v}" defer></script>
