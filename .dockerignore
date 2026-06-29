@@ -1,6 +1,7 @@
 .git
 .github
 *.md
+!agent-safety.md
 LICENSE
 NOTICE
 SECURITY.md
