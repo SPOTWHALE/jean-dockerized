@@ -31,7 +31,7 @@ on:
         default: ""
 
 permissions:
-  contents: read
+  contents: write # release job needs this; repo default token is read-only so job-level alone is denied
 
 # Serialize releases so two overlapping dispatches can't race on the wrapper
 # letter (both reading the same "last letter" before either publishes).
