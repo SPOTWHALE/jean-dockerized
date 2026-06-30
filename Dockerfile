@@ -80,6 +80,23 @@ RUN install -m0755 -d /etc/apt/keyrings \
 RUN printf '#!/bin/sh\nexec docker compose "$@"\n' > /usr/local/bin/docker-compose \
  && chmod +x /usr/local/bin/docker-compose
 
+# Tailscale (tailscaled + CLI). OPTIONAL "no domain" on-ramp: when TS_AUTHKEY is
+# set, entrypoint.sh joins the container to your tailnet so you reach Jean at
+# <tailscale-ip>:3456 and agent dev servers at <tailscale-ip>:<port> directly -
+# no domain, SSL, or reverse proxy. The container is already privileged, so
+# entrypoint uses kernel networking (/dev/net/tun) which makes 0.0.0.0-bound
+# services reachable on the tailnet IP. Inert if TS_AUTHKEY is unset.
+# TAILSCALE_VERSION defaults to latest but can be pinned for reproducible builds
+# (same pattern as CLAUDE_CODE_VERSION/CODEX_VERSION): --build-arg TAILSCALE_VERSION=1.80.0
+ARG TAILSCALE_VERSION=
+RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+      -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
+ && curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
+      -o /etc/apt/sources.list.d/tailscale.list \
+ && apt-get update && apt-get install -y --no-install-recommends \
+      "tailscale${TAILSCALE_VERSION:+=${TAILSCALE_VERSION}}" \
+ && rm -rf /var/lib/apt/lists/*
+
 # Preview reverse proxy: a static Caddy binary that maps <port>.<domain> to
 # 127.0.0.1:<port> so dev servers the agent starts are viewable via a wildcard
 # domain. Pulled from the official image (single self-contained binary).
@@ -154,6 +171,8 @@ COPY web/theia-dispatcher.mjs /opt/theia/theia-dispatcher.mjs
 # dedicated dir the relay resolves `node_modules` from. entrypoint.sh runs it on
 # loopback; the browser reaches it through the preview proxy at jdpush.<wildcard>.
 COPY web/push-relay.mjs /opt/push/push-relay.mjs
+# Pure idle-dedup helper imported by the relay (must sit next to it for the import).
+COPY web/push-idle.mjs /opt/push/push-idle.mjs
 RUN cd /opt/push \
  && npm init -y >/dev/null 2>&1 \
  && npm i web-push@3.6.7 \

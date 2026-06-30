@@ -23,6 +23,14 @@ import { spawn, execFileSync } from 'node:child_process'
 const WORKSPACE = process.env.THEIA_WORKSPACE || '/workspace'
 const MAIN = process.env.THEIA_MAIN || '/opt/theia/src-gen/backend/main.js'
 const LISTEN_PORT = parseInt(process.env.THEIA_DISPATCH_PORT || '8444', 10)
+// Default loopback (reached only via Caddy). Set to 0.0.0.0 for the Tailscale path,
+// where the client hits this dispatcher directly at <tailscale-ip>:<port> (no
+// subdomain routing) and scopes worktrees via ?ws=/?repo=&branch= query hints.
+const LISTEN_HOST = process.env.THEIA_DISPATCH_HOST || '127.0.0.1'
+// Host the per-worktree Theia instances bind. Loopback by default (reached only via
+// this dispatcher); 0.0.0.0 on the Tailscale path so /__open can redirect the client
+// straight to <tailscale-ip>:<instance-port>.
+const INSTANCE_HOST = process.env.THEIA_INSTANCE_HOST || '127.0.0.1'
 const PORT_BASE = parseInt(process.env.THEIA_INSTANCE_PORT_BASE || '8500', 10)
 const IDLE_MS = parseInt(process.env.THEIA_IDLE_MINUTES || '15', 10) * 60_000
 const READY_TIMEOUT_MS = 60_000
@@ -119,7 +127,7 @@ function ensureInstance(dir) {
   if (it) { it.lastSeen = Date.now(); return it }
   const port = nextPort++
   log(`spawn Theia dir=${dir} port=${port}`)
-  const proc = spawn('node', [MAIN, dir, '--hostname', '127.0.0.1', '--port', String(port)],
+  const proc = spawn('node', [MAIN, dir, '--hostname', INSTANCE_HOST, '--port', String(port)],
     { stdio: 'ignore', env: process.env })
   it = { dir, port, proc, lastSeen: Date.now(), ready: waitForPort(port, READY_TIMEOUT_MS) }
   instances.set(dir, it)
@@ -132,10 +140,22 @@ const slugOf = (host) => {
   return slugify(label)
 }
 
-function pickerHtml() {
-  const rows = listWorktrees().map((w) =>
-    `<li><a href="//${w.slug}.__SUFFIXHOST__">${escapeHtml(w.repo)} <span class="b">&rsaquo; ${escapeHtml(w.branch)}</span></a></li>`
-  ).join('')
+// Direct (Tailscale) access has no wildcard subdomain to route by - a bare IP or a
+// MagicDNS (…​.ts.net) host - so the picker links to the dispatcher's /__open instead.
+const isDirectHost = (h) => {
+  const host = String(h || '').split(':')[0]
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /\.ts\.net$/i.test(host)
+}
+
+function pickerHtml(reqHost) {
+  const direct = isDirectHost(reqHost)
+  const rows = listWorktrees().map((w) => {
+    // Direct/Tailscale: hit /__open, which redirects to this worktree's own Theia port
+    // (every port is reachable over the tailnet) so Theia's later asset/WS requests go
+    // straight to that instance. Domain path keeps the wildcard-subdomain link.
+    const href = direct ? `/__open?ws=${encodeURIComponent(w.dir)}` : `//${w.slug}.__SUFFIXHOST__`
+    return `<li><a href="${href}">${escapeHtml(w.repo)} <span class="b">&rsaquo; ${escapeHtml(w.branch)}</span></a></li>`
+  }).join('')
   return `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Open in IDE</title>
 <style>body{margin:0;min-height:100dvh;background:#0b0b0c;color:#e7e7ea;font:15px/1.5 system-ui,sans-serif;display:grid;place-items:center;padding:24px}
 .card{width:min(560px,100%)}h1{font-size:18px;margin:0 0 4px}p{color:#9b9ba3;margin:0 0 16px;font-size:13px}
@@ -156,7 +176,8 @@ function suffixHost(reqHost) {
 }
 
 function servePicker(req, res) {
-  const html = pickerHtml().replaceAll('__SUFFIXHOST__', escapeHtml(suffixHost(req.headers.host)))
+  const html = pickerHtml(req.headers.host)
+    .replaceAll('__SUFFIXHOST__', escapeHtml(suffixHost(req.headers.host)))
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
   res.end(html)
 }
@@ -172,6 +193,19 @@ const hints = (req) => {
 }
 
 const server = http.createServer(async (req, res) => {
+  // Direct/Tailscale entry point: resolve the worktree from query hints, then redirect
+  // the client to that worktree's own Theia port (reachable over the tailnet), so every
+  // later request hits the instance directly instead of routing by an absent subdomain.
+  if (req.url.split('?')[0] === '/__open') {
+    const dir = resolveDir(null, hints(req))
+    if (!dir) return servePicker(req, res)
+    const it = ensureInstance(dir)
+    it.lastSeen = Date.now()
+    try { await it.ready } catch { return badGateway(res, 'instance failed to start') }
+    const ip = String(req.headers.host || '').split(':')[0]
+    res.writeHead(302, { location: `//${ip}:${it.port}/`, 'cache-control': 'no-store' })
+    return res.end()
+  }
   const slug = slugOf(req.headers.host)
   if (!slug || slug === 'ide') return servePicker(req, res)
   const dir = resolveDir(slug, hints(req))
@@ -215,4 +249,4 @@ setInterval(() => {
   }
 }, 60_000).unref()
 
-server.listen(LISTEN_PORT, '127.0.0.1', () => log(`listening on 127.0.0.1:${LISTEN_PORT}, workspace=${WORKSPACE}`))
+server.listen(LISTEN_PORT, LISTEN_HOST, () => log(`listening on ${LISTEN_HOST}:${LISTEN_PORT}, workspace=${WORKSPACE}`))

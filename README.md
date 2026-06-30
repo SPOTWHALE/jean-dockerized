@@ -5,17 +5,17 @@
 [![GitHub release](https://img.shields.io/github/v/release/SPOTWHALE/jean-dockerized?logo=github)](https://github.com/SPOTWHALE/jean-dockerized/releases)
 [![Image status](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FSPOTWHALE%2Fjean-dockerized%2Fbadges%2Fimage-status.json&logo=docker)](https://github.com/SPOTWHALE/jean-dockerized/actions/workflows/release.yml)
 
-Run [Jean](https://github.com/coollabsio/jean) in your browser, on your server. Code with Claude and Codex from any device - laptop, phone, tablet - with no local setup.
-
-**PWA-ready.** Install it to your home screen and use it like a native app.
+Run [Jean](https://github.com/coollabsio/jean) headless on your own server: a full AI coding environment - Claude and Codex agents, a browser IDE, and Docker-in-Docker - reachable from any device with no local setup.
 
 ## Features
 
 - **Browser UI** - Jean's full interface served over HTTPS, token-protected
+- **Installable PWA** - add it to your phone's home screen and use it like a native app
 - **Built-in IDE** - a bundled [Eclipse Theia](https://theia-ide.org/) editor (files, terminal, git, extensions) one tap away, no extra port
-- **Push notifications** - a `🔔` button subscribes your phone so the agent can buzz you when it finishes, errors, or needs approval - fire a task, pocket the phone, get pinged
+- **Notifications** - subscribe your phone so the agent can buzz you when it finishes, errors, or needs approval - fire a task, pocket the phone, get pinged
 - **Preview URLs** - dev servers the agent starts are instantly reachable at `<port>.apps.your-domain` (same pattern as Codespaces/Gitpod)
 - **Docker-in-Docker** - agents can run `docker` and `docker compose`; requires `privileged: true`
+- **No-domain access** - join your [Tailscale](https://tailscale.com/) tailnet and reach it from anywhere by private IP - no domain, SSL, or open ports
 - **amd64 + arm64** - one image runs on x86 servers and ARM (Apple Silicon, Ampere/Graviton, Raspberry Pi)
 - **Persistent workspace** - repos, credentials, and settings survive redeploys
 - **Auto-updates** - watches Jean releases daily and rebuilds automatically
@@ -72,14 +72,14 @@ record so Traefik terminates TLS itself.
 
 ## Run locally
 
+<details>
+<summary><strong>Build, run &amp; access a local image</strong></summary>
+
 `docker-compose.yml` references the **published** image (`spotwhale/jean-dockerized:latest`)
 and has **no `build:` section**, so `docker compose up` on its own just pulls and runs the
 released image - it will **not** include local/branch changes or a Jean version you pick.
 
-<details>
-<summary><strong>Build &amp; run a local image</strong></summary>
-
-To run a local build you must build that tag yourself first:
+**Build & run a local image** - to run a local build you must build that tag yourself first:
 
 ```bash
 cp .env.example .env            # optional - JEAN_TOKEN / PREVIEW_PASSWORD / JEAN_PUBLIC_URL
@@ -96,12 +96,7 @@ docker compose logs -f          # startup banner prints the access token + login
 
 Re-run the `docker build` + `docker compose up -d` after any change under `web/` to pick it up.
 
-</details>
-
-<details>
-<summary><strong>Test from your phone (same wifi)</strong></summary>
-
-Edit `docker-compose.yml` before `up`:
+**Test from your phone (same wifi)** - edit `docker-compose.yml` before `up`:
 
 - change the app bind `127.0.0.1:3456:3456` → `0.0.0.0:3456:3456` (loopback-only by default
   won't accept LAN connections), and open your host firewall for port `3456`;
@@ -112,17 +107,60 @@ Then scan the QR (or open `http://<your-LAN-ip>:3456/?token=...`).
 
 > Service workers / PWA install / Web Push need a **secure context**, so over plain
 > `http://<ip>` they're off; use `localhost` on the host, or an HTTPS tunnel/domain, for those.
-
-</details>
+> (Tailscale also serves plain `http`, so those features are off there too.)
 
 **Lost or changed your token?** Open `https://your-domain/token.html?reset` to clear
 the saved token, then paste your access token again (from the logs or `JEAN_TOKEN`).
 Works inside the installed PWA too. The page only stores the token in your browser; it
 grants nothing on its own, since Jean's backend still validates it on every request.
 
+</details>
+
+## Tailscale (no domain)
+
+Don't have a domain yet, or want to run this on a home box / laptop / cheap VPS
+and reach it from your phone? Set **`TS_AUTHKEY`** (an
+[auth key](https://login.tailscale.com/admin/settings/keys)) and the container
+joins your [tailnet](https://tailscale.com/) on boot - no domain, SSL, reverse
+proxy, or open ports:
+
+- **Jean UI** → `http://<tailscale-ip>:3456` (the startup banner prints the exact link)
+- **Agent dev servers** → `http://<tailscale-ip>:<port>` **directly** (the agent must bind `0.0.0.0`)
+- **Built-in IDE** → the `</> IDE` button just works; over Tailscale it routes to the
+  worktree's own Theia port instead of a `<slug>.<domain>` subdomain
+
+Install Tailscale on your phone/laptop, sign into the same tailnet, and the
+container is reachable by its private IP (or MagicDNS name). The node identity
+persists on the workspace volume, so the IP is stable across restarts.
+
+```yaml
+environment:
+  TS_AUTHKEY: tskey-auth-xxxxx   # from the Tailscale admin console
+  TS_HOSTNAME: jean              # optional, defaults to "jean"
+```
+
+> Within a tailnet every port on the node is reachable by IP, so the wildcard
+> `<port>.<domain>` proxy isn't needed: dev servers, and each per-worktree Theia,
+> are reached on their own port directly. **No domain, SSL, or reverse proxy** -
+> and **no need to set `JEAN_PUBLIC_URL`**.
+>
+> **[Notifications](#push-notifications) don't work over Tailscale** - Web Push needs a
+> secure context (HTTPS), and `http://<tailscale-ip>` isn't one. For phone
+> notifications you need the HTTPS domain path (which can run alongside Tailscale).
+>
+> **Security:** over Tailscale these direct ports bypass the `PREVIEW_PASSWORD`
+> basic-auth gate (which lives in Caddy) - the tailnet itself is the access
+> boundary. Each Theia terminal runs as root over all of `/workspace`, so keep
+> the tailnet single-user (or ACL it). Use the `</> IDE` button via the **Tailscale
+> IP** shown in the banner; a MagicDNS name falls back to the domain/subdomain path.
+
 ## Preview URLs
 
-When an agent starts a dev server, reach it at `https://<port>.apps.your-domain`.
+<details>
+<summary><strong>Reach an agent's dev server</strong></summary>
+
+When an agent starts a dev server, reach it at `https://<port>.apps.your-domain`
+(domain path), or directly at `<tailscale-ip>:<port>` over Tailscale (above).
 
 Setup (Coolify):
 1. Wildcard TLS needs a **DNS-01** challenge - add your DNS provider token in Coolify/Traefik
@@ -130,7 +168,12 @@ Setup (Coolify):
 
 > Preview subdomains are **disabled (403) until you set `PREVIEW_PASSWORD`**, which gates every preview port behind one basic-auth login (`PREVIEW_USER` defaults to `dev`). This fails closed so a misconfigured deploy never exposes loopback ports to the internet.
 
+</details>
+
 ## Push notifications
+
+<details>
+<summary><strong>Get a phone notification when an agent finishes</strong></summary>
 
 Agents run long; the point of coding from your phone is to walk away. An
 **Agent notifications** toggle in **Settings → General → Notifications**
@@ -155,6 +198,8 @@ Setup:
 > TUI** (no chat events), so it's covered by **idle detection** - a push when the
 > terminal goes quiet (finished or waiting). Tune or disable with `PUSH_IDLE_MS`.
 
+</details>
+
 ## Built-in IDE
 
 <details>
@@ -174,12 +219,16 @@ through the **same preview proxy** as dev servers - never on its own host port:
 The `</> IDE` button reads Jean's active repo/branch and opens that worktree directly,
 falling back to the picker when nothing is open.
 
-Setup:
+Setup (domain path):
 1. It is gated by the preview proxy, so it is **only reachable once `PREVIEW_PASSWORD`
    is set** (same basic-auth login as previews; fails closed otherwise).
 2. Set `JEAN_PUBLIC_URL` - the IDE wildcard is subdomains of its host, derived
    automatically so the button builds correct links. Unset falls back to
    `.<current-host>`.
+
+> On the **[Tailscale](#tailscale-no-domain) path neither is needed** - set `TS_AUTHKEY`
+> and the button routes to the worktree's own Theia port directly (no wildcard, no
+> `PREVIEW_PASSWORD` gate; the tailnet is the access boundary).
 
 > **Cosmetic scoping, not a security boundary.** Each Theia only roots the sidebar at
 > one worktree; its integrated terminal still runs as root and can reach all of
@@ -226,12 +275,15 @@ Sysbox is a **host-installed runtime**, not part of the image: it can't be bundl
 | Env | Default | Description |
 |-----|---------|-------------|
 | `JEAN_TOKEN` | auto-generated | Fixed access token (persisted in the workspace volume if unset) |
-| `JEAN_PUBLIC_URL` | unset | Public URL of this instance; prints the login link + QR, and supplies the preview/IDE/push wildcard (subdomains of its host) - so it also enables the `</> IDE` button and push |
+| `JEAN_PUBLIC_URL` | unset | Public URL of this instance (domain path); prints the login link + QR, and supplies the preview/IDE/notification wildcard (subdomains of its host) - so it enables notifications and the domain-path `</> IDE` links. **Not needed with `TS_AUTHKEY`**: Tailscale gives the banner link + direct-port IDE/previews. **Notifications don't work over Tailscale** (they need an HTTPS domain), so set this only if you want them |
+| `TS_AUTHKEY` | unset | Tailscale auth key; when set, the container joins your tailnet on boot so you reach Jean at `<tailscale-ip>:3456` (and dev servers at `<tailscale-ip>:<port>`) with no domain/SSL/proxy |
+| `TS_HOSTNAME` | `jean` | Tailscale node name shown in your tailnet (only used when `TS_AUTHKEY` is set) |
 | `JEAN_PORT` | `3456` | Jean web UI port |
 | `PREVIEW_PORT` | `8088` | Preview reverse-proxy port |
 | `PREVIEW_USER` | `dev` | Username for preview basic auth |
 | `PREVIEW_PASSWORD` | unset | Required to enable previews **and the IDE**; gates all preview subdomains behind basic auth (unset = 403) |
 | `THEIA_DISPATCH_PORT` | `8444` | Internal loopback port for the per-worktree Theia dispatcher; reached via the preview proxy, never exposed directly |
-| `PUSH_SUBJECT` | `mailto:push@jean-dockerized.local` | VAPID contact the push relay sends to push services (use your email/URL) |
+| `PUSH_SUBJECT` | `mailto:push@jean-dockerized.local` | Optional. VAPID requires a contact URI in every push, but providers don't verify it, so the default works. Set your `mailto:`/`https:` only so a push provider could reach you if your relay misbehaves |
 | `PUSH_PORT` | `8455` | Internal loopback port for the Web Push relay; reached via the preview proxy at `jdpush.<wildcard>`, never exposed directly |
 | `PUSH_IDLE_MS` | `20000` | Terminal-Claude idle push: notify after this many ms of no terminal output (finished/waiting). `0` disables idle pushes |
+| `PUSH_TURN_MIN_BYTES` | `256` | Idle-push dedup threshold: after one idle notification, suppress repeats until this many bytes of fresh terminal output prove a new turn started (stops a redrawing TUI re-buzzing the same state) |

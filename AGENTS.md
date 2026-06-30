@@ -202,7 +202,21 @@ background; it needs the container to run **privileged** (`docker-compose.yml` s
 run inside this container, so ports they publish are reachable through the preview proxy. If the
 container isn't privileged, dockerd fails to start and entrypoint logs it but jean still runs.
 
-`entrypoint.sh` flow: set `safe.directory '*'` → start Xvfb → start dockerd (bg) → start preview proxy (caddy, bg) → start Theia IDE (bg) → start push relay (bg, if `JEAN_PUBLIC_URL` set) →
+**Tailscale (optional, no-domain on-ramp).** When `TS_AUTHKEY` is set, `entrypoint.sh` starts
+`tailscaled` (kernel networking - the container is already privileged, so it `mknod`s
+`/dev/net/tun`) and runs `tailscale up`, joining the container to the tailnet. Reach Jean at
+`<tailscale-ip>:${JEAN_PORT}` and agent dev servers at `<tailscale-ip>:<port>` directly - no
+domain/SSL/Caddy, because every 0.0.0.0-bound port on the node is reachable inside the tailnet.
+State persists at `/workspace/.tailscale` so the node identity (and IP) survives restarts. The
+**built-in IDE also works over Tailscale**: when `TS_AUTHKEY` is set, entrypoint binds the Theia
+dispatcher + its per-worktree instances to `0.0.0.0` and publishes `__THEIA_DISPATCH_PORT__` to
+the injected button (`web/theia-launch.js`); on a bare-IP host the button targets the dispatcher's
+`/__open?ws=…` endpoint, which 302-redirects to that worktree's own Theia port (subdomain routing
+can't work without a wildcard host). These direct ports bypass the Caddy `PREVIEW_PASSWORD` gate -
+the tailnet is the access boundary. Inert when `TS_AUTHKEY` is unset (dispatcher stays loopback);
+`tailscale`/`tailscaled` are installed in the Dockerfile.
+
+`entrypoint.sh` flow: set `safe.directory '*'` → start tailscaled (bg, if `TS_AUTHKEY` set) → start Xvfb → start dockerd (bg) → start preview proxy (caddy, bg) → start Theia IDE (bg) → start push relay (bg, if `JEAN_PUBLIC_URL` set) →
 resolve auth args (`JEAN_TOKEN` set → `--token …`; else jean auto-generates and persists a
 token in the workspace volume) → print the login banner (a ready link + `qrencode` QR when
 `JEAN_PUBLIC_URL` is set) → `exec jean --headless`. Auth is always on: the wrapper

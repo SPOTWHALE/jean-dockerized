@@ -27,6 +27,19 @@
     var s = window.__THEIA_HOST_SUFFIX__ || ('.' + location.host)
     return s.charAt(0) === '.' ? s : '.' + s
   }
+  // Tailscale path: no wildcard subdomain to route by, so when reached over a bare IP
+  // (and the dispatcher port was published via /theia-config.js) target the dispatcher's
+  // /__open directly - it redirects to the worktree's own Theia port. __THEIA_DISPATCH_PORT__
+  // is set by entrypoint.sh only when TS_AUTHKEY is on, so domain deploys never take this path.
+  var DISPATCH_PORT = window.__THEIA_DISPATCH_PORT__
+  function isDirectHost() {
+    // Bare tailnet IP, or a Tailscale MagicDNS name (…​.ts.net) - neither can host a
+    // wildcard subdomain, so route through the dispatcher's direct-port /__open.
+    return !!DISPATCH_PORT && (/^\d{1,3}(\.\d{1,3}){3}$/.test(location.hostname) || /\.ts\.net$/i.test(location.hostname))
+  }
+  function directBase() {
+    return location.protocol + '//' + location.hostname + ':' + DISPATCH_PORT
+  }
   // jean sets document.title to "<repo> › <worktree> (<branch>)" for the active
   // worktree (just "Jean" when nothing is open) - a reliable on-load signal that needs
   // no React/DOM coupling. Parse repo+branch from it.
@@ -41,6 +54,13 @@
     return repo && branch ? { repo: repo, branch: branch } : null
   }
   function targetUrl() {
+    // Tailscale/direct-IP access: route through the dispatcher's /__open redirect.
+    if (isDirectHost()) {
+      if (currentWorktreePath) return directBase() + '/__open?ws=' + encodeURIComponent(currentWorktreePath)
+      var td = fromTitle()
+      if (td) return directBase() + '/__open?repo=' + encodeURIComponent(td.repo) + '&branch=' + encodeURIComponent(td.branch)
+      return directBase() + '/' // picker
+    }
     // Most precise: an exact worktree path captured from a jean switch event.
     if (currentWorktreePath) {
       var leaf = currentWorktreePath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'workspace'

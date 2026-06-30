@@ -82,6 +82,13 @@ services:
       JEAN_PUBLIC_URL: http://localhost:3456
       # Leave unset and jean auto-generates + persists a token.
       # JEAN_TOKEN: change-me-to-a-long-random-string
+      # Tailscale "no domain" on-ramp: set an auth key (https://login.tailscale.com/admin/settings/keys)
+      # and the container joins your tailnet on boot - reach Jean at
+      # http://<tailscale-ip>:3456 and agent dev servers at <tailscale-ip>:<port>
+      # directly, no domain/SSL/proxy. The IDE + wildcard previews still need the
+      # JEAN_PUBLIC_URL + Caddy path. Uses kernel networking (privileged already on).
+      # TS_AUTHKEY: tskey-auth-xxxxx
+      # TS_HOSTNAME: jean
     deploy:
       resources:
         limits:

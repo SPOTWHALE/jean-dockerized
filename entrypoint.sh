@@ -31,6 +31,37 @@ if [ -f /app/agent-safety.md ]; then
   echo "[entrypoint] wrote AI agent safety rules to /workspace/.claude/CLAUDE.md + appended to /workspace/AGENTS.md"
 fi
 
+# Tailscale: OPTIONAL "no domain" on-ramp. Set TS_AUTHKEY to join the container
+# to your tailnet; then reach Jean at <tailscale-ip>:${JEAN_PORT} and any agent
+# dev server at <tailscale-ip>:<its-port> directly - no domain, SSL, or proxy.
+# The container is privileged, so use kernel networking (needs /dev/net/tun),
+# which exposes 0.0.0.0-bound services (jean, dev servers) on the tailnet IP.
+# State persists on the workspace volume so the node keeps its identity across
+# restarts. The IDE/wildcard-preview features still need the domain+Caddy path.
+if [ -n "${TS_AUTHKEY:-}" ] && command -v tailscaled >/dev/null 2>&1; then
+  mkdir -p /dev/net /workspace/.tailscale /var/run/tailscale
+  [ -c /dev/net/tun ] || mknod /dev/net/tun c 10 200 || \
+    echo "[entrypoint] WARNING: could not create /dev/net/tun (not privileged?)" >&2
+  echo "[entrypoint] starting tailscaled"
+  tailscaled --state=/workspace/.tailscale/tailscaled.state \
+    --socket=/var/run/tailscale/tailscaled.sock >/tmp/tailscaled.log 2>&1 &
+  for _ in $(seq 1 40); do [ -S /var/run/tailscale/tailscaled.sock ] && break; sleep 0.25; done
+  # --timeout so a blocked outbound (firewalled host, controlplane unreachable) can't
+  # wedge startup: tailscale up returns after 30s and we fall through to launch jean.
+  # Without it a network problem would hang the entrypoint and jean would never start.
+  if tailscale up --authkey="${TS_AUTHKEY}" --hostname="${TS_HOSTNAME:-jean}" --timeout=30s >/tmp/tailscale-up.log 2>&1; then
+    TS_IP="$(tailscale ip -4 2>/dev/null | head -n1)"
+    echo "[entrypoint] tailscale up - reach Jean at http://${TS_IP:-<tailscale-ip>}:${JEAN_PORT}"
+  else
+    echo "[entrypoint] WARNING: tailscale up failed/timed out - continuing without it." >&2
+    echo "[entrypoint]   Common causes: blocked outbound to controlplane.tailscale.com," >&2
+    echo "[entrypoint]   an expired/used auth key, or the host kernel missing the 'tun'" >&2
+    echo "[entrypoint]   module (load it on the HOST - this container won't modprobe it)." >&2
+    echo "[entrypoint]   Jean is still reachable via the domain path / published ports." >&2
+    cat /tmp/tailscale-up.log >&2
+  fi
+fi
+
 # jean inits a GTK event loop even in --headless, so it needs a display.
 # Start Xvfb explicitly (xvfb-run is unreliable as PID 1) and point DISPLAY at it.
 echo "[entrypoint] starting Xvfb on :99"
@@ -141,16 +172,33 @@ if [ -f /opt/theia/src-gen/backend/main.js ] && [ -f /opt/theia/theia-dispatcher
   # it uses to build <slug>.<suffix> (e.g. .jean.example.com). Derived from
   # JEAN_PUBLIC_URL above; empty -> the button falls back to ".<current-host>".
   # JSON-encoded via node to avoid shell-quoting pitfalls.
+  # Tailscale path: bind the dispatcher + its Theia instances to 0.0.0.0 so the IDE
+  # is reachable at <tailscale-ip>:<port> (the button targets /__open, which redirects
+  # to the worktree's own instance port). Loopback-only otherwise (reached via Caddy).
+  if [ -n "${TS_AUTHKEY:-}" ]; then
+    THEIA_DISPATCH_HOST=0.0.0.0
+    THEIA_INSTANCE_HOST=0.0.0.0
+  else
+    THEIA_DISPATCH_HOST=127.0.0.1
+    THEIA_INSTANCE_HOST=127.0.0.1
+  fi
   DIST=/usr/local/bin/dist
   if [ -d "$DIST" ]; then
     printf "window.__THEIA_HOST_SUFFIX__=%s\n" \
       "$(JD_SUFFIX="$HOST_SUFFIX" node -e 'process.stdout.write(JSON.stringify(process.env.JD_SUFFIX||""))')" \
       > "$DIST/theia-config.js"
+    # Publish the dispatcher port to the IDE button only on the Tailscale path, so it
+    # switches to direct-port routing when opened over a tailnet IP.
+    if [ -n "${TS_AUTHKEY:-}" ]; then
+      printf "window.__THEIA_DISPATCH_PORT__=%s\n" "${THEIA_DISPATCH_PORT}" >> "$DIST/theia-config.js"
+    fi
   fi
 
-  echo "[entrypoint] starting Theia dispatcher on 127.0.0.1:${THEIA_DISPATCH_PORT}"
+  echo "[entrypoint] starting Theia dispatcher on ${THEIA_DISPATCH_HOST}:${THEIA_DISPATCH_PORT}"
   start_theia_dispatch() {
     THEIA_DISPATCH_PORT="${THEIA_DISPATCH_PORT}" \
+    THEIA_DISPATCH_HOST="${THEIA_DISPATCH_HOST}" \
+    THEIA_INSTANCE_HOST="${THEIA_INSTANCE_HOST}" \
     THEIA_MAIN=/opt/theia/src-gen/backend/main.js \
     THEIA_WORKSPACE=/workspace \
       node /opt/theia/theia-dispatcher.mjs >/tmp/theia-dispatcher.log 2>&1 &
@@ -268,9 +316,16 @@ print_login_banner() {
       echo
       qrencode -t UTF8 -m 1 "${url}" 2>/dev/null || true
     fi
-  else
+  elif [ -z "${TS_IP:-}" ]; then
     echo "  Set JEAN_PUBLIC_URL (e.g. https://jean.example.com) to print a ready"
     echo "  login link + QR here. Otherwise open your domain and paste the token."
+  fi
+  if [ -n "${TS_IP:-}" ]; then
+    if [ -n "${JEAN_TOKEN:-}" ]; then
+      echo "  Tailscale: http://${TS_IP}:${JEAN_PORT}/token.html?token=${JEAN_TOKEN}"
+    else
+      echo "  Tailscale: http://${TS_IP}:${JEAN_PORT}/token.html (paste token below)"
+    fi
   fi
   if [ -n "${JEAN_TOKEN:-}" ]; then
     echo "  Access token: ${JEAN_TOKEN}"
