@@ -27,6 +27,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { timingSafeEqual } from 'node:crypto'
 import { join } from 'node:path'
 import webpush from 'web-push'
+import { createIdleTracker } from './push-idle.mjs'
 
 const JEAN_PORT = process.env.JEAN_PORT || '3456'
 const PUSH_PORT = Number(process.env.PUSH_PORT || 8455)
@@ -165,16 +166,20 @@ function notificationFor(event, payload) {
 
 // --- Terminal idle detection (Claude-backend "end of turn"). Keyed by the
 // terminal_id on every terminal:output; each new chunk reschedules the timer, so
-// it only fires after IDLE_MS of true silence. One push per idle gap: the timer
-// is cleared on fire, and the next output starts a fresh one (next turn).
+// it only fires after IDLE_MS of true silence. The idle tracker dedups: it returns
+// true only on the FIRST idle of a turn, then stays quiet until enough fresh output
+// proves a new turn started - so a TUI redraw blip can't re-buzz the same idle state.
+const idle = createIdleTracker({ turnMinBytes: Number(process.env.PUSH_TURN_MIN_BYTES || 256) })
 const termTimers = new Map()
-function noteTerminalOutput(termId) {
+function noteTerminalOutput(termId, len) {
   if (!IDLE_MS || !termId) return
+  idle.onOutput(termId, len)
   clearTimeout(termTimers.get(termId))
   termTimers.set(
     termId,
     setTimeout(() => {
       termTimers.delete(termId)
+      if (!idle.onIdle(termId)) return // already notified this idle; nothing new since
       broadcast({
         title: 'Jean: Claude is idle',
         body: 'Claude stopped output - it finished or is waiting for you.',
@@ -187,6 +192,13 @@ function clearTerminal(termId) {
   if (!termId) return
   clearTimeout(termTimers.get(termId))
   termTimers.delete(termId)
+  idle.clear(termId)
+}
+// Best-effort length of a terminal:output chunk across possible payload shapes; feeds
+// the idle tracker's "real turn vs redraw blip" threshold.
+const outLen = (p) => {
+  const s = p && (p.data ?? p.output ?? p.text)
+  return typeof s === 'string' ? s.length : 0
 }
 
 // --- WebSocket client to jean. Reconnects with backoff; jean's heartbeats keep
@@ -208,7 +220,7 @@ function connectJean() {
     if (msg.type !== 'event' || !msg.event) return
     // Terminal (Claude-backend) idle tracking. terminal:stopped means the shell
     // exited, so cancel any pending idle push for it.
-    if (msg.event === 'terminal:output') return noteTerminalOutput(msg.payload && msg.payload.terminal_id)
+    if (msg.event === 'terminal:output') return noteTerminalOutput(msg.payload && msg.payload.terminal_id, outLen(msg.payload))
     if (msg.event === 'terminal:stopped') return clearTerminal(msg.payload && msg.payload.terminal_id)
     const n = notificationFor(msg.event, msg.payload)
     if (n) broadcast(n).catch(() => {})
