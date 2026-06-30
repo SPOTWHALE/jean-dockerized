@@ -118,6 +118,9 @@ grants nothing on its own, since Jean's backend still validates it on every requ
 
 ## Tailscale (no domain)
 
+<details>
+<summary><strong>Reach it from anywhere by private IP, no domain</strong></summary>
+
 Don't have a domain yet, or want to run this on a home box / laptop / cheap VPS
 and reach it from your phone? Set **`TS_AUTHKEY`** (an
 [auth key](https://login.tailscale.com/admin/settings/keys)) and the container
@@ -151,8 +154,10 @@ environment:
 > **Security:** over Tailscale these direct ports bypass the `PREVIEW_PASSWORD`
 > basic-auth gate (which lives in Caddy) - the tailnet itself is the access
 > boundary. Each Theia terminal runs as root over all of `/workspace`, so keep
-> the tailnet single-user (or ACL it). Use the `</> IDE` button via the **Tailscale
-> IP** shown in the banner; a MagicDNS name falls back to the domain/subdomain path.
+> the tailnet single-user (or ACL it). The `</> IDE` button works via either the
+> **Tailscale IP** or a **MagicDNS (`*.ts.net`) name**.
+
+</details>
 
 ## Preview URLs
 
