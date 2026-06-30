@@ -311,23 +311,37 @@
   // one-finger drag over the terminal into WheelEvents on the xterm viewport.
   // Same input path as desktop, so if wheel scrolls Claude on desktop it scrolls
   // here too. A small threshold lets taps (place cursor / select) through.
-  var tScroll = { on: false, y: 0 }
+  var tScroll = { on: false, y: 0, vp: null }
+  // Coalesce wheel dispatch to one per frame: a finger drag fires touchmove ~60-120x/s,
+  // and dispatching a wheel (→ full TUI repaint) on each one thrashes the terminal into
+  // visible flicker. Accumulate the delta and flush once per animation frame instead.
+  var pendingDy = 0, scrollRaf = 0
+  function flushScroll() {
+    scrollRaf = 0
+    if (tScroll.vp && pendingDy) {
+      tScroll.vp.dispatchEvent(new WheelEvent('wheel', { deltaY: pendingDy, deltaMode: 0, bubbles: true, cancelable: true }))
+    }
+    pendingDy = 0
+  }
   function inTerm(t) { return !!(t && t.closest && t.closest('.xterm')) }
   document.addEventListener('touchstart', function (e) {
     if (e.touches.length !== 1 || !inTerm(e.target)) { tScroll.on = false; return }
     tScroll.on = true
     tScroll.y = e.touches[0].clientY
+    tScroll.vp = document.querySelector('.xterm-viewport')
   }, { passive: true })
   document.addEventListener('touchmove', function (e) {
-    if (!tScroll.on || e.touches.length !== 1) return
-    var vp = document.querySelector('.xterm-viewport')
-    if (!vp) return
+    if (!tScroll.on || e.touches.length !== 1 || !tScroll.vp) return
+    // Suppress native page scroll for the WHOLE gesture, not just frames that cross the
+    // threshold: leaking sub-threshold moves to native scroll makes the page and the
+    // terminal fight each other, which is the flicker. preventDefault first, always.
+    e.preventDefault()
     var y = e.touches[0].clientY
     var dy = tScroll.y - y // drag up (finger up) -> positive deltaY -> scroll down
     if (Math.abs(dy) < 2) return
     tScroll.y = y
-    e.preventDefault() // stop the page rubber-banding while we drive the terminal
-    vp.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true }))
+    pendingDy += dy
+    if (!scrollRaf) scrollRaf = requestAnimationFrame(flushScroll)
   }, { passive: false })
   document.addEventListener('touchend', function () { tScroll.on = false }, { passive: true })
 
